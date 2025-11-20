@@ -1,3 +1,3 @@
 const router = require('express').Router();
-// router.use('/users', require('./user.routes'));
+router.use('/menu', require('./menu.routes'));
 module.exports = router;

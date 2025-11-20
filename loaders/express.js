@@ -7,7 +7,9 @@ module.exports = ({ app }) => {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
+  app.use(require('../middleware/response'));
   app.use('/api', routes);
+
 
   app.use(notFound);
   app.use(errorHandler);
