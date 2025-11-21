@@ -15,30 +15,30 @@ exports.fetchMenuCatagoryByResturent = async (req, res) => {
         const { resturent_identifier } = reqData;
         try {
             const URI = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
-           const requestBody = {
-            restID: resturent_identifier
-           }
-            const responseData = await petpujaService(URI,requestBody);
+            const requestBody = {
+                restID: resturent_identifier
+            }
+            const responseData = await petpujaService(URI, requestBody);
             console.log(responseData);
-            const catagories = responseData.categories.map(i =>{
+            const catagories = responseData.categories.map(i => {
                 return {
                     id: i.categoryid,
                     name: i.categoryname,
                     active: i.active,
                 }
             });
-            return res.success({data:catagories});
+            return res.success({ data: catagories });
         } catch (error) {
             console.log(error);
-            return res.error({message: 'Something went wrong'});
+            return res.error({ message: 'Something went wrong' });
         }
     } catch (err) {
-        return res.error({message: 'Internal server error'});
+        return res.error({ message: 'Internal server error' });
     }
 };
 
 exports.fetchMenuByCatagory = async (req, res) => {
-   try {
+    try {
         const reqBody = {
             ...req.body
         }
@@ -53,14 +53,14 @@ exports.fetchMenuByCatagory = async (req, res) => {
             const requestBody = {
                 restID: resturent_identifier
             }
-            const responseData = await petpujaService(URI,requestBody);
-            const itemsByCategory = responseData.items.filter(menu=>menu.item_categoryid == category_id);
-            return res.success({data:itemsByCategory});
+            const responseData = await petpujaService(URI, requestBody);
+            const itemsByCategory = responseData.items.filter(menu => menu.item_categoryid == category_id);
+            return res.success({ data: itemsByCategory });
         } catch (error) {
             console.log(error);
-            return res.error({message: 'Something went wrong'});
+            return res.error({ message: 'Something went wrong' });
         }
     } catch (err) {
-        return res.error({message: 'Internal server error'});
+        return res.error({ message: 'Internal server error' });
     }
 }
