@@ -4,6 +4,7 @@ const routes = require('../api/routes');
 const notFound = require('../middleware/notFound');
 const errorHandler = require('../middleware/errorHandler');
 
+ // 👈 LOADS .env
 module.exports = ({ app }) => {
   app.use(cors())
   app.use(express.json());
@@ -13,6 +14,7 @@ module.exports = ({ app }) => {
   app.use('/api', routes);
 
 
+ 
   app.use(notFound);
   app.use(errorHandler);
 };
