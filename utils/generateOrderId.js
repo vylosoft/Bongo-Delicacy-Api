@@ -1,8 +1,12 @@
-exports.generateOrderId = () => {
-  const now = new Date();
-  const d = String(now.getDate()).padStart(2, "0");
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const y = now.getFullYear();
-  const r = Math.floor(1000 + Math.random() * 9000);
-  return `${d}${m}${y}-${r}`;
+// utils/orderId.js
+
+// pattern: <LETTER>-<NUMBER>, e.g. A-6, B-100
+const generateOrderId = () => {
+  const letter = String.fromCharCode(65 + Math.floor(Math.random() * 26)); // A-Z
+  const number = Math.floor(Math.random() * 9999) + 1; // 1..9999
+  return `${letter}-${number}`;
+};
+
+module.exports = {
+  generateOrderId
 };
