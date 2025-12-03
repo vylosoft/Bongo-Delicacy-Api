@@ -21,7 +21,18 @@ const fetchMenuByCatagorySchema = params => {
     }
 }
 
+const fetchAdminMenuWithCategorySchema = params => {
+  try {
+    return Joi.object({
+      resturent_identifier: Joi.string().required().min(3)
+    }).validate(params, { abortEarly: false, stripUnknown: true });
+  } catch (error) {
+    throw new Error(error);
+  }
+};
+
 module.exports = {
-    fetchMenuCatagoryByResturentSchema,
-    fetchMenuByCatagorySchema
+  fetchMenuCatagoryByResturentSchema,
+  fetchMenuByCatagorySchema,
+  fetchAdminMenuWithCategorySchema
 };
