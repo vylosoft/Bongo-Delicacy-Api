@@ -9,7 +9,6 @@ const supabase = createClient(
 )
 
 const cancelOrder = async (req, res) => {
- 
   try {
     const clientorderID = req.body.clientorderID || req.body.clientorderid
     const reason = req.body.reason || "Cancelled by customer"
@@ -37,9 +36,9 @@ const cancelOrder = async (req, res) => {
       .select("*")
       .eq("id", clientorderID)
       .single()
-      
 
     if (error || !order) {
+      console.error("Order fetch error:", error)
       return res.status(404).json({
         success: false,
         message: "Order not found",
@@ -78,26 +77,35 @@ const cancelOrder = async (req, res) => {
       console.warn("PetPooja cancel failed:", err.message)
     }
 
-    // Update Supabase status
-await supabase
-  .from("orders")
-  .update({
-    status: "CANCELLED",       // <-- THIS writes CANCELLED into DB
-    refunded_amount: refundAmount,
-    cancelledAt: new Date().toISOString(),
-  })
-  .eq("id", clientorderID);
+    // Update Supabase status - ONLY UPDATE STATUS
+    const { data: updatedOrder, error: updateError } = await supabase
+      .from("orders")
+      .update({
+        status: "CANCELLED"
+      })
+      .eq("id", clientorderID)
+      .select()
 
+    if (updateError) {
+      console.error("Supabase update error:", updateError)
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update order status in database",
+        error: updateError.message,
+      })
+    }
 
+    console.log("Order updated successfully:", updatedOrder)
 
     return res.json({
       success: true,
       message: "Order cancelled and refunded",
       amount: refundAmount,
+      order: updatedOrder,
     })
-console.log(m);
 
   } catch (err) {
+    console.error("Cancel order error:", err)
     return res.status(500).json({
       success: false,
       message: "Internal server error",
