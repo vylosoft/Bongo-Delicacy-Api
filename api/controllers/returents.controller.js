@@ -1,8 +1,8 @@
 const Joi = require('joi');
-const { fetchResturentByMappingIdSchema,  } = require('../validations/resturent.validation');
+const { fetchResturentByMappingIdSchema,addResturentSchema   } = require('../validations/resturent.validation');
 const { petpujaService } = require('../../utils/petpujaService');
-
-exports.fetchResturentByMappingId = async (req, res) => {
+const { supabase } = require('../models/resturent.model');
+const fetchResturentByMappingId = async (req, res) => {
     try {
         const reqBody = {
             ...req.query
@@ -32,4 +32,57 @@ exports.fetchResturentByMappingId = async (req, res) => {
         return res.error({ message: 'Internal server error' });
     }
 };
+const addResturent = async (req, res, next) => {
+  try {
+    const { error, value } = addResturentSchema(req.body);
+    if (error) return res.status(400).json({ error: error.details[0].message });
 
+    const { data, error: dbError } = await supabase
+      .from('restaurants')
+      .insert([value])
+      .select();
+
+    if (dbError) return res.status(400).json({ error: dbError.message });
+
+    return res.status(201).json({
+      message: 'Restaurant created successfully',
+      restaurant: data[0]
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+
+const addResturentTable = async (req, res, next) => {
+  try {
+    const rest_id = req.params.rest_id;
+    if (!rest_id) return res.status(400).json({ error: 'rest_id is required' });
+
+    const { error, value } = addResturentTableSchema(req.body);
+    if (error) return res.status(400).json({ error: error.details[0].message });
+
+    const payload = { rest_id, ...value };
+
+    const { data, error: dbError } = await supabase
+      .from('restaurant_tables')
+      .insert([payload])
+      .select();
+
+    if (dbError) return res.status(400).json({ error: dbError.message });
+
+    return res.status(201).json({
+      message: 'Table added successfully',
+      table: data[0]
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = {
+    fetchResturentByMappingId,
+    addResturent,
+    addResturentTable
+}
