@@ -26,9 +26,11 @@ const addResturentSchema = body =>
   }).validate(body, { abortEarly: false, stripUnknown: true });
   const addResturentTableSchema = body =>
   Joi.object({
+      table_name: Joi.string().optional(),
     table_number: Joi.number().integer().min(1).required(),
     capacity: Joi.number().integer().min(1).required()
   }).validate(body, { abortEarly: false, stripUnknown: true });
+
 
 module.exports = {
     fetchResturentByMappingIdSchema,
