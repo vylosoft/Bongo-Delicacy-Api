@@ -6,5 +6,5 @@ router.post("/recommend", aiController.recommendDish);
 
 // POST /api/ai/parse-menu
 router.post("/parse-menu", aiController.parseMenu);
-
+router.post("/user-recommendations", aiController.getUserRecommendations);
 module.exports = router;
