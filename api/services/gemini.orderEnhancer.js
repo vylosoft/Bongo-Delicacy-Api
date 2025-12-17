@@ -1,83 +1,75 @@
 const { GoogleGenAI } = require("@google/genai");
 
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) throw new Error("Gemini API key missing");
+const genAI = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+});
 
-const genAI = new GoogleGenAI({ apiKey });
-
-/**
- * Generate order description for restaurant based on user preferences
- * @param {Object} userPreferences - User's dietary preferences and feedback
- * @param {Array} orderItems - Items in current order
- * @param {String} restaurantName - Name of the restaurant
- * @returns {Promise<String>} - AI generated description
- */
-const generateOrderDescription = async (userPreferences, orderItems, restaurantName) => {
+const generateOrderDescription = async (
+  userPreferences,
+  orderItems,
+  restaurantName
+) => {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+    });
 
-    // Build item list
-    const itemsList = orderItems
-      .map(item => `- ${item.name} (Qty: ${item.quantity})`)
+    const items = orderItems
+      .map(i => `- ${i.name} x${i.quantity}`)
       .join("\n");
 
     const prompt = `
-You are a helpful assistant that creates clear, concise order notes for restaurants.
+You are writing kitchen instructions for restaurant staff.
 
-CUSTOMER PREFERENCES:
-- Likes: ${userPreferences.likes || "Not specified"}
-- Dislikes: ${userPreferences.dislikes || "Not specified"}
-- Allergies: ${userPreferences.allergies || "Not specified"}
-- Past Feedback: ${userPreferences.feedback || "No previous feedback"}
+USER PREFERENCES:
+Likes: ${userPreferences.likes}
+Dislikes: ${userPreferences.dislikes}
+Allergies: ${userPreferences.allergies}
 
-CURRENT ORDER ITEMS:
-${itemsList}
+PAST FEEDBACK:
+${userPreferences.feedback || "None"}
 
-RESTAURANT: ${restaurantName}
+CURRENT ORDER:
+${items}
 
-Create a SHORT, ACTIONABLE description (max 150 words) for the restaurant staff that:
-1. Highlights critical allergies or dietary restrictions
-2. Mentions important preparation preferences
-3. References past feedback if relevant to current items
-4. Uses professional, polite language
+RESTAURANT:
+${restaurantName}
 
-Format: Direct instructions without extra formatting or headers.
+RULES:
+- Be precise
+- Mention allergies clearly
+- Adjust taste based on feedback
+- Max 80 words
+
+Return ONLY JSON:
+{
+  "orderDescription": "text"
+}
 `;
 
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const description = response.text().trim();
+    const text = result.response.text().trim();
 
-    return description;
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      return { description: parsed.orderDescription };
+    }
 
-  } catch (error) {
-    console.error("AI Description Generation Error:", error);
-    // Fallback to basic description
-    return generateFallbackDescription(userPreferences);
+    return { description: text };
+  } catch (err) {
+    console.error("Gemini error:", err);
+    return generateFallback(userPreferences);
   }
 };
 
-/**
- * Fallback description if AI fails
- */
-const generateFallbackDescription = (userPreferences) => {
+const generateFallback = (prefs) => {
   const parts = [];
-  
-  if (userPreferences.allergies) {
-    parts.push(`⚠️ ALLERGIES: ${userPreferences.allergies}`);
-  }
-  
-  if (userPreferences.dislikes) {
-    parts.push(`Avoid: ${userPreferences.dislikes}`);
-  }
-  
-  if (userPreferences.likes) {
-    parts.push(`Prefers: ${userPreferences.likes}`);
-  }
-
-  return parts.length > 0 
-    ? parts.join(" | ") 
-    : "No special instructions";
+  if (prefs.allergies) parts.push(`Avoid ${prefs.allergies}`);
+  if (prefs.dislikes) parts.push(`Avoid ${prefs.dislikes}`);
+  return {
+    description: parts.join(". ") || "No special instructions",
+  };
 };
 
 module.exports = { generateOrderDescription };

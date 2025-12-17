@@ -52,9 +52,9 @@ const cancelPetpujaOrder = async ({
   cancelReason = "Payment failed"
 }) => {
   const payload = {
-    app_key: env.PETPUJA_APP_KEY,
-    app_secret: env.PETPUJA_APP_SECRET,
-    access_token: env.PETPUJA_ACCESS_TOKEN,
+    app_key: process.env.APP_KEY,
+    app_secret: process.env.APP_SECRET,
+    access_token: process.env.ACCESS_TOKEN,
     restID,
     orderID: "",          // as per your note: pass it blank, will be deprecated
     clientorderID,
@@ -63,8 +63,26 @@ const cancelPetpujaOrder = async ({
   };
 
   try {
-    const { data } = await petpujaClient.post("/update_order_status", payload);
+    const { data } = await petpujaClient.post(
+      "/update_order_status",
+      payload
+    );
+    console.log("BRUNO CHECK – PetPooja raw response:", data);
+    console.log("🧾 PetPooja cancel response:", data);
+
+    if (
+      !data ||
+      data.success === false ||
+      data.success === "0" ||
+      data.status === "failure"
+    ) {
+      const err = new Error("PetPooja cancellation rejected");
+      err.details = data;
+      throw err;
+    }
+
     return data;
+
   } catch (error) {
     const errData = error.response?.data || error.message || error;
     const status = error.response?.status || 500;

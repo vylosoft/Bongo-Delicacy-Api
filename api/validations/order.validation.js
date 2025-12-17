@@ -4,6 +4,7 @@ const Joi = require("joi");
 const saveOrderSchema = (body) => {
   try {
     const schema = Joi.object({
+      userId: Joi.string().optional().allow(null, ""),
       orderinfo: Joi.object({
         OrderInfo: Joi.object({
           Restaurant: Joi.object({
