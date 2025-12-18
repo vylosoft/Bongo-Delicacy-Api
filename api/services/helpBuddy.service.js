@@ -1,53 +1,16 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const axios = require('axios');
+const { petpujaService } = require('../../utils/petpujaService');
 
 // Initialize Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const { petpujaService } = require('../../utils/petpujaService');
+
 // In-memory cache for menu data
 const menuCache = new Map();
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
 
 /**
- * Direct PetPooja API call (bypassing any wrapper issues)
- */
-async function callPetPoojaAPI(restaurantId) {
-    try {
-        const url = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
-        
-        console.log('🌐 Calling PetPooja API...');
-        console.log('  URL:', url);
-        console.log('  RestID:', restaurantId);
-                    const responseData = await petpujaService(URI, requestBody);
-            console.log(responseData);
-        const response = await axios.post(url, 
-            { restID: restaurantId },
-   
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                },
-           
-            }
-        );
-
-        console.log('✅ PetPooja API Response:', response.status);
-        
-        return response.data;
-    } catch (error) {
-        console.error('❌ PetPooja API Error:', error.message);
-        if (error.response) {
-            console.error('  Status:', error.response.status);
-            console.error('  Data:', error.response.data);
-        }
-        throw new Error(`PetPooja API failed: ${error.message}`);
-    }
-}
-
-/**
- * Fetch complete menu with categories from PetPooja
- * @param {string} restaurantId - Restaurant identifier (use "c9ignw2k50" not "4911")
+ * Fetch complete menu with categories from PetPooja using petpujaService
+ * @param {string} restaurantId - Restaurant identifier
  * @returns {Promise<Object>} Menu data with categories and items
  */
 async function fetchCompleteMenu(restaurantId) {
@@ -64,14 +27,13 @@ async function fetchCompleteMenu(restaurantId) {
         console.log('🔄 Fetching fresh menu data from PetPooja...');
         console.log('🔑 Restaurant ID:', restaurantId);
         
-        // IMPORTANT: Use the menu sharing code, not the restaurant ID
-        // If restaurantId is "4911", we need to use "c9ignw2k50"
-        const menuCode = restaurantId === "4911" ? "c9ignw2k50" : restaurantId;
-        
-        // Call PetPooja API directly
-        const responseData = await callPetPoojaAPI(menuCode);
+        const URI = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
+        console.log("🌐 PetPooja URL:", URI);
 
-        console.log('📦 Response structure:', {
+        const requestBody = { restID: restaurantId };
+        const responseData = await petpujaService(URI, requestBody);
+
+        console.log('📦 PetPooja Response structure:', {
             hasSuccess: 'success' in responseData,
             success: responseData?.success,
             hasMessage: 'message' in responseData,
@@ -94,14 +56,14 @@ async function fetchCompleteMenu(restaurantId) {
         if (categories.length === 0) {
             console.error('⚠️ NO CATEGORIES FOUND!');
             console.error('Response keys:', Object.keys(responseData));
-            console.error('First 500 chars:', JSON.stringify(responseData).substring(0, 500));
+            console.error('Full response:', JSON.stringify(responseData));
         }
 
         if (items.length === 0) {
             console.error('⚠️ NO ITEMS FOUND!');
         }
 
-        // Even if no data, log what we got
+        // Log first items for debugging
         if (categories.length > 0) {
             console.log('✓ First category:', categories[0].categoryname);
         }
@@ -109,7 +71,7 @@ async function fetchCompleteMenu(restaurantId) {
             console.log('✓ First item:', items[0].itemname);
         }
 
-        // Structure menu data
+        // Structure menu data - similar to fetchAdminMenuWithCategory
         const menuData = {
             categories: categories
                 .filter(cat => cat.active === '1')
@@ -139,7 +101,7 @@ async function fetchCompleteMenu(restaurantId) {
                         }))
                     };
                 })
-                .filter(cat => cat.menus.length > 0),
+                .filter(cat => cat.menus.length > 0), // Only include categories with items
             totalItems: items.filter(i => i.active === '1').length,
             restaurantId: restaurantId,
             lastUpdated: new Date().toISOString()
@@ -279,10 +241,11 @@ Remember: You represent Bongo Delicacy's brand. Be professional, helpful, and ma
 /**
  * Generate chat response using Gemini API
  */
-async function generateChatResponse(history = [], userMessage, restaurantId) {
+async function generateChatResponse(history = [], userMessage, restaurantId, userId = null) {
     try {
         console.log('\n🤖 ========== GEMINI CHAT REQUEST ==========');
         console.log('📍 Restaurant ID:', restaurantId);
+        console.log('👤 User ID:', userId || 'Guest');
         console.log('💬 User Message:', userMessage);
         console.log('📚 History length:', history.length);
         
@@ -296,7 +259,8 @@ async function generateChatResponse(history = [], userMessage, restaurantId) {
         
         console.log('📊 Menu data loaded:', {
             categories: menuData.categories.length,
-            items: menuData.totalItems
+            items: menuData.totalItems,
+            hasError: !!menuData.error
         });
 
         // Initialize Gemini model
@@ -333,6 +297,7 @@ ${userMessage}
 RESPOND AS BONGO HELP BUDDY:`;
 
         console.log('\n🚀 Sending to Gemini...');
+        console.log('📏 Prompt length:', fullPrompt.length);
         
         // Generate response
         const result = await model.generateContent(fullPrompt);
@@ -350,8 +315,10 @@ RESPOND AS BONGO HELP BUDDY:`;
                 menuContext: {
                     categoriesCount: menuData.categories.length,
                     itemsCount: menuData.totalItems,
-                    lastUpdated: menuData.lastUpdated
+                    lastUpdated: menuData.lastUpdated,
+                    hasError: !!menuData.error
                 },
+                userId: userId || null,
                 model: 'gemini-2.0-flash-exp',
                 timestamp: new Date().toISOString()
             }
