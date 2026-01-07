@@ -124,9 +124,9 @@ const cancelOrder = async (req, res) => {
     const { data: updatedOrder, error: updateError } = await supabase
       .from("orders")
       .update({
-        status: "cancelled",
+        status: "CANCELLED",
         refund_status: razorpayRefundId ? "completed" : null,
-        refund_id: razorpayRefundId,
+       
       })
       .eq("id", clientorderID)
       .select()

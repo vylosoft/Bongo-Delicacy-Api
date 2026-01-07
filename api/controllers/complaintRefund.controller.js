@@ -146,10 +146,10 @@ const processComplaintRefund = async (req, res) => {
       .from("orders")
       .update({
         // Order remains PAID
-        status: "paid",
+        status: "REFUNDED",
 
         refund_status: "completed",
-        refund_id: razorpayRefundId,
+        // refund_id: razorpayRefundId,
         complaint: updatedComplaint,
       })
       .eq("id", orderId)
