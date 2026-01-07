@@ -13,20 +13,28 @@ const supabase = createClient(
  * POST /api/complaints/refund
  * body: { orderId: string, refundAmount: number, reason?: string }
  */
+
+/**
+ * POST /api/complaints/refund
+ * body: { orderId: string, refundAmount: number, reason?: string }
+ */
 const processComplaintRefund = async (req, res) => {
   try {
     const { orderId, refundAmount, reason = "Complaint refund" } = req.body;
 
-    console.log("=== COMPLAINT REFUND DEBUG ===");
-    console.log("orderId:", orderId);
-    console.log("refundAmount:", refundAmount);
-    console.log("reason:", reason);
+    console.log("=== COMPLAINT REFUND ===", {
+      orderId,
+      refundAmount,
+      reason,
+    });
 
-    // Validation
+    /* ---------------------------------------------------
+       1️⃣ BASIC VALIDATION
+    --------------------------------------------------- */
     if (!orderId || refundAmount === undefined || refundAmount === null) {
       return res.status(400).json({
         success: false,
-        message: "orderId and refundAmount are required"
+        message: "orderId and refundAmount are required",
       });
     }
 
@@ -34,135 +42,143 @@ const processComplaintRefund = async (req, res) => {
     if (isNaN(numericAmount) || numericAmount <= 0) {
       return res.status(400).json({
         success: false,
-        message: "Refund amount must be greater than 0"
+        message: "Refund amount must be greater than 0",
       });
     }
 
-    // 1) FETCH ORDER
-    console.log("Fetching order from DB...");
+    /* ---------------------------------------------------
+       2️⃣ FETCH ORDER
+    --------------------------------------------------- */
     const { data: order, error: fetchError } = await supabase
       .from("orders")
       .select("*")
       .eq("id", orderId)
       .single();
 
-    console.log("Fetch result:", { order, fetchError });
-
     if (fetchError || !order) {
-      console.error("Order fetch error:", fetchError);
       return res.status(404).json({
         success: false,
         message: "Order not found",
-        error: fetchError?.message
       });
     }
 
-    // 2) VALIDATE REFUND AMOUNT <= TOTAL ORDER AMOUNT
-    const totalOrderAmount = Number(order.totalAmount || 0);
-    
+    if (!order.complaint || order.complaint.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: "No pending complaint found for this order",
+      });
+    }
+
+    /* ---------------------------------------------------
+       3️⃣ VALIDATE REFUND LIMIT
+    --------------------------------------------------- */
+    const totalOrderAmount = Number(order.total_amount || 0);
+
     if (numericAmount > totalOrderAmount) {
       return res.status(400).json({
         success: false,
-        message: `Refund amount (₹${numericAmount}) cannot exceed total order amount (₹${totalOrderAmount})`
+        message: `Refund amount (₹${numericAmount}) cannot exceed total order amount (₹${totalOrderAmount})`,
       });
     }
 
-    console.log(`Refund validation passed: ₹${numericAmount} <= ₹${totalOrderAmount}`);
-
-    if (!order.razorpay_payment_id) {
+    if (!order.external_order_id) {
       return res.status(400).json({
         success: false,
-        message: "No Razorpay payment found. Cannot refund."
+        message: "No Razorpay order/payment reference found",
       });
     }
 
-    // 3) RAZORPAY REFUND
-    console.log("Processing Razorpay refund...");
+    if (order.refund_status === "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Refund already completed for this order",
+      });
+    }
+
+    /* ---------------------------------------------------
+       4️⃣ RAZORPAY REFUND
+    --------------------------------------------------- */
     const razorpay = new Razorpay({
       key_id: env.RAZORPAY_KEY_ID,
-      key_secret: env.RAZORPAY_KEY_SECRET
+      key_secret: env.RAZORPAY_KEY_SECRET,
     });
 
+    let razorpayRefundId;
+
     try {
-      const refund = await razorpay.payments.refund(order.razorpay_payment_id, {
-        amount: numericAmount * 100, // Convert to paise
+      const refund = await razorpay.payments.refund(order.refund_id, {
+        amount: Math.round(numericAmount * 100), // paise
         notes: {
           reason,
           type: "complaint_refund",
-          orderId
-        }
+          orderId,
+        },
       });
-      console.log("Razorpay refund successful:", refund.id);
-    } catch (razorpayError) {
-      console.error("Razorpay refund failed:", razorpayError);
+
+      razorpayRefundId = refund.id;
+      console.log("✅ Razorpay refund successful:", razorpayRefundId);
+    } catch (err) {
+      console.error("❌ Razorpay refund failed:", err);
       return res.status(500).json({
         success: false,
         message: "Razorpay refund failed",
-        error: razorpayError.message
+        error: err.message,
       });
     }
 
-    // 4) UPDATE COMPLAINT STATUS
-    console.log("Updating complaint status...");
-    const { error: complaintUpdateError } = await supabase
-      .from("complaints")
-      .update({
-        status: "approved"
-      })
-      .eq("orderId", orderId);
+    const now = new Date().toISOString();
 
-    if (complaintUpdateError) {
-      console.error("Complaint update error:", complaintUpdateError);
-      // Continue even if this fails - refund was successful
-    }
+    /* ---------------------------------------------------
+       5️⃣ UPDATE COMPLAINT SNAPSHOT (IN ORDER)
+    --------------------------------------------------- */
+    const updatedComplaint = {
+      ...order.complaint,
+      status: "approved",
+      refundedAmount: numericAmount,
+      refundId: razorpayRefundId,
+      resolvedAt: now,
+    };
 
-    // 5) UPDATE ORDER STATUS TO REFUNDED
-    console.log("Updating order status to REFUNDED...");
+    /* ---------------------------------------------------
+       6️⃣ UPDATE ORDER (NO STATUS CORRUPTION)
+    --------------------------------------------------- */
     const { data: updatedOrder, error: updateError } = await supabase
       .from("orders")
       .update({
-        status: "REFUNDED"
+        // Order remains PAID
+        status: "paid",
+
+        refund_status: "completed",
+        refund_id: razorpayRefundId,
+        complaint: updatedComplaint,
       })
       .eq("id", orderId)
-      .select();
+      .select()
+      .single();
 
-    console.log("Update result:", { updatedOrder, updateError });
-
-    if (updateError) {
-      console.error("❌ SUPABASE UPDATE FAILED:", updateError);
+    if (updateError || !updatedOrder) {
       return res.status(500).json({
         success: false,
-        message: "Failed to update order status in database",
-        error: updateError.message,
-        details: updateError
+        message: "Refund succeeded but order update failed",
       });
     }
 
-    if (!updatedOrder || updatedOrder.length === 0) {
-      console.error("❌ UPDATE RETURNED NO DATA");
-      return res.status(500).json({
-        success: false,
-        message: "Order update returned no data - possible RLS issue"
-      });
-    }
-
-    console.log("✅ Order updated successfully:", updatedOrder[0]);
-
+    /* ---------------------------------------------------
+       7️⃣ SUCCESS RESPONSE
+    --------------------------------------------------- */
     return res.status(200).json({
       success: true,
-      message: `₹${numericAmount} refunded successfully (${((numericAmount/totalOrderAmount)*100).toFixed(1)}% of order total)`,
+      message: `₹${numericAmount} refunded successfully`,
       refundAmount: numericAmount,
       totalAmount: totalOrderAmount,
-      order: updatedOrder[0]
+      order: updatedOrder,
     });
-
   } catch (err) {
     console.error("❌ COMPLAINT REFUND ERROR:", err);
     return res.status(500).json({
       success: false,
       message: "Internal server error while processing refund",
       error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 };

@@ -10,108 +10,151 @@ const supabase = createClient(
 
 const cancelOrder = async (req, res) => {
   try {
-    const clientorderID = req.body.clientorderID || req.body.clientorderid
-    const reason = req.body.reason || "Cancelled by customer"
-    const amount = req.body.amount
+    const clientorderID = req.body.clientorderID;
+    const reason = req.body.reason || "Cancelled by customer";
+    const amount = req.body.amount;
 
+    /* ---------------------------------------------------
+       1️⃣ VALIDATION
+    --------------------------------------------------- */
     if (!clientorderID) {
       return res.status(400).json({
         success: false,
         message: "clientorderID is required",
-      })
+      });
     }
 
-    if (!amount || isNaN(Number(amount))) {
+    const refundAmount = Number(amount);
+    if (isNaN(refundAmount) || refundAmount <= 0) {
       return res.status(400).json({
         success: false,
-        message: "Valid amount is required",
-      })
+        message: "Valid refund amount is required",
+      });
     }
 
-    const refundAmount = Number(amount)
-
-    // fetch order
+    /* ---------------------------------------------------
+       2️⃣ FETCH ORDER
+    --------------------------------------------------- */
     const { data: order, error } = await supabase
       .from("orders")
       .select("*")
       .eq("id", clientorderID)
-      .single()
+      .single();
 
     if (error || !order) {
-      console.error("Order fetch error:", error)
       return res.status(404).json({
         success: false,
         message: "Order not found",
-      })
+      });
     }
 
-    if (order.status === "CANCELLED" || order.status === "REFUNDED") {
+    if (order.status === "cancelled") {
       return res.status(400).json({
         success: false,
         message: "Order already cancelled",
-      })
+      });
     }
 
-    // Razorpay refund if applicable
-    if (order.razorpay_payment_id) {
+    if (order.refund_status === "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Refund already completed for this order",
+      });
+    }
+
+    /* ---------------------------------------------------
+       3️⃣ REFUND SAFETY CHECK
+    --------------------------------------------------- */
+    const totalAmount = Number(order.total_amount || 0);
+
+    if (refundAmount > totalAmount) {
+      return res.status(400).json({
+        success: false,
+        message: "Refund amount cannot exceed order total",
+      });
+    }
+
+    /* ---------------------------------------------------
+       4️⃣ RAZORPAY REFUND (IF PAID)
+    --------------------------------------------------- */
+    let razorpayRefundId = null;
+
+    if (order.external_order_id) {
       const razorpay = new Razorpay({
         key_id: env.RAZORPAY_KEY_ID,
         key_secret: env.RAZORPAY_KEY_SECRET,
-      })
+      });
 
-      await razorpay.refunds.create({
-        payment_id: order.razorpay_payment_id,
-        amount: refundAmount * 100,
-        notes: { clientorderID, reason },
-      })
+      try {
+        const refund = await razorpay.payments.refund(order.refund_id, {
+          amount: Math.round(refundAmount * 100),
+          notes: {
+            reason,
+            clientorderID,
+            type: "order_cancel_refund",
+          },
+        });
+
+        razorpayRefundId = refund.id;
+      } catch (err) {
+        console.error("Razorpay refund failed:", err);
+        return res.status(500).json({
+          success: false,
+          message: "Refund failed at payment gateway",
+        });
+      }
     }
 
-    // Cancel request to PetPuja
+    /* ---------------------------------------------------
+       5️⃣ PETPUJA CANCEL (BEST-EFFORT)
+    --------------------------------------------------- */
     try {
       await cancelPetpujaOrder({
-        restID: order.restaurantid,
-        client_order_id: clientorderID,
-        cancel_reason: reason,
-      })
+        restID: order.brand_id,
+        clientorderID,
+        cancelReason: reason,
+      });
     } catch (err) {
-      console.warn("PetPooja cancel failed:", err.message)
+      console.warn("PetPuja cancel failed:", err.message);
     }
 
-    // Update Supabase status - ONLY UPDATE STATUS
+    /* ---------------------------------------------------
+       6️⃣ UPDATE ORDER (CLEAN + HONEST)
+    --------------------------------------------------- */
     const { data: updatedOrder, error: updateError } = await supabase
       .from("orders")
       .update({
-        status: "CANCELLED"
+        status: "cancelled",
+        refund_status: razorpayRefundId ? "completed" : null,
+        refund_id: razorpayRefundId,
       })
       .eq("id", clientorderID)
       .select()
+      .single();
 
-    if (updateError) {
-      console.error("Supabase update error:", updateError)
+    if (updateError || !updatedOrder) {
       return res.status(500).json({
         success: false,
-        message: "Failed to update order status in database",
-        error: updateError.message,
-      })
+        message: "Failed to update order",
+      });
     }
 
-    console.log("Order updated successfully:", updatedOrder)
-
+    /* ---------------------------------------------------
+       7️⃣ SUCCESS
+    --------------------------------------------------- */
     return res.json({
       success: true,
-      message: "Order cancelled and refunded",
-      amount: refundAmount,
+      message: "Order cancelled successfully",
+      refundAmount,
       order: updatedOrder,
-    })
-
+    });
   } catch (err) {
-    console.error("Cancel order error:", err)
+    console.error("Cancel order error:", err);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
-      error: err.message,
-    })
+    });
   }
-}
+};
 
-module.exports = { cancelOrder }
+module.exports = { cancelOrder };
