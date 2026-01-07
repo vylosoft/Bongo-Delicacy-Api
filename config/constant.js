@@ -11,4 +11,21 @@ const orderStatusConfig = () => {
   ]);
 };
 
-module.exports = { orderStatusConfig };
+const riderStatusConfig =() =>{
+  return {
+    ACCEPTED : "ACCEPTED", //Order Created Successfully. 
+    ALLOTTED: "ALLOTTED", // Rider Allotted to pick up the items.
+    ARRIVED: "ARRIVED", //Rider has reached the pickup location. 
+    DISPATCHED: "DISPATCHED", //Order is picked up by the rider. 
+    ARRIVED_CUSTOMER_DOORSTEP : "ARRIVED_CUSTOMER_DOORSTEP", //Rider has reached the drop-off location.
+    DELIVERED: "DELIVERED", //Successfully delivered, and the transaction has concluded.
+    CANCELLED: "CANCELLED", // Task is cancelled,
+    SEARCHING_FOR_NEW_RIDER: "SEARCHING_FOR_NEW_RIDER", //SEARCHING_FOR_NEW_RIDER
+    RTO_INIT : "RTO_INIT", //RTO is initiated 
+    RTO_COMPLETE : "RTO_COMPLETE" //RTO is completed
+  }
+}
+
+
+
+module.exports = { orderStatusConfig, riderStatusConfig };

@@ -7,5 +7,6 @@ router.use("/petpuja", require("./petpuja.routes"));
 router.use("/reservation", require("./reservation.routes.js") );
 router.use("/complaints", require("./complaint.routes.js") );
 router.use('/ai', require('./ai.routes'));
+router.use('/rider', require('./rider.routes.js'));
 module.exports = router;
 

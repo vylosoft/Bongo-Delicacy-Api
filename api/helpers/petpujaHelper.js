@@ -1,6 +1,7 @@
 // helpers/petpujaHelper.js
 const axios = require("axios");
 const env = require("../../config/env");
+const { riderStatusConfig } = require("../../config/constant");
 
 // axios instance for PetPooja
 const petpujaClient = axios.create({
@@ -93,7 +94,62 @@ const cancelPetpujaOrder = async ({
   }
 };
 
+const sendRiderDetailsToPetPuja = async (riderInfo) => {
+  console.log("riderInfo::", riderInfo)
+  try {
+    // "rider-assigned/rider-arrived/pickedup/delivered"
+    const payload = {
+      app_key: process.env.APP_KEY,
+      app_secret: process.env.APP_SECRET,
+      access_token: process.env.ACCESS_TOKEN,
+      "order_id": riderInfo?.data?.orderId,
+      "outlet_id": "89",
+      "status": riderStatusPetpujaStatusMapping("ALLOTTED"),
+      "rider_data": {
+        "rider_name": riderInfo.data.rider_name,
+        "rider_phone_number": riderInfo.data.rider_contact
+      },
+      "external_order_id": ""   // pass this blank
+    }
+    console.log("update rider status to petpuja:::", payload);
+    try {
+      const { data } = await petpujaClient.post(
+        "/rider_info_webhook",
+        payload
+      );
+      return {
+        success: true,
+        message: "Rider status updated to petpuja",
+        data
+      }
+    } catch (error) {
+      console.log(error);
+      return {
+        success: false,
+        message: "Unable to update rider status petpuja"
+      }
+    }
+
+  } catch (error) {
+    return {
+      success: false,
+      message: error.message
+    }
+  }
+}
+
+const riderStatusPetpujaStatusMapping = (riderStatus) =>{
+  const riderStatusConst = riderStatusConfig();
+    if(riderStatusConst.ALLOTTED === riderStatus) return "rider-assigned";
+    if(riderStatusConst.ARRIVED === riderStatus) return  "rider-arrived";
+    if(riderStatusConst.DISPATCHED === riderStatus) return "pickedup";
+    if(riderStatusConst.DELIVERED === riderStatus) return "delivered";
+    if(riderStatusConst.CANCELLED === riderStatus) return -1;
+    return "";
+}
+
 module.exports = {
   placeOrderWithPetpuja,
-  cancelPetpujaOrder
+  cancelPetpujaOrder,
+  sendRiderDetailsToPetPuja
 };

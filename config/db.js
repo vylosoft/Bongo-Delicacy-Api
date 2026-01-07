@@ -1,25 +1,11 @@
-// const { Sequelize } = require('sequelize');
-const { createClient } = require('@supabase/supabase-js')
+const { createClient } = require("@supabase/supabase-js");
 const env = require('./env');
 
-// const sequelize = new Sequelize(env.DB_URL, {
-//   dialect: 'postgres',
-//   logging: false,
-//   pool: {
-//     max: 2,
-//     min: 0,
-//     acquire: 30000,
-//     idle: 10000
-//   }
-// });
 
-// Initialize the Supabase client
-const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
-    realtime: {
-        params: {
-            eventsPerSecond: 10,
-        },
-    },
-});
+const SUPABASE_URL = "https://nldgaczpzfmwamivniua.supabase.co";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZGdhY3pwemZtd2FtaXZuaXVhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjYyNzA5NSwiZXhwIjoyMDc4MjAzMDk1fQ.sLnOMjKs-WJu9IyAaLUzLCmKZl0-Ph32-ElUT2MbWYY";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 module.exports = supabase;
-// module.exports = sequelize;
+
