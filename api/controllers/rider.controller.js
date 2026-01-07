@@ -1,4 +1,4 @@
-const { checkServiceability, createDeliveryTaskFromOrder , trackTaskStatus} = require("../helpers/riderHelper");
+const { checkServiceability, createDeliveryTaskFromOrder , trackTaskStatus, cancelDeliveryTask} = require("../helpers/riderHelper");
 const { sendRiderDetailsToPetPuja } = require("../helpers/petpujaHelper.js")
 const { riderBookingSchema } = require("../validations/rider.validation.js");
 const supabase = require("../../config/db.js");
@@ -141,9 +141,38 @@ const riderBooking = async (req, res) => {
 
 const riderCancel = async (req, res) => {
     try {
-        
+        const data = {
+            ...req.body
+        }
+        const schema = Joi.object({
+            taskId: Joi.string().required().label('Task Id')
+        });
+        const { error, value } = schema.validate(data, { abortEarly: false });
+        if (error) {
+            return res.error({
+                status: 400,
+                message: error.details[0].message
+            })
+        }
+        const { taskId } = value;
+        const cancelRiderResp = await cancelDeliveryTask(taskId);
+        if (!cancelRiderResp.success) {
+            return res.error({
+                status: 400,
+                message: error.details[0].message
+            })
+        }
+
+         return res.success({
+            status: 200,
+            data: cancelRiderResp,
+            message: "Rider cancel request sent successfuly"
+        })
     } catch (error) {
-        
+        return res.error({
+            status: 500,
+            message: "Internal server error.",
+        })
     }
 
 }
@@ -156,7 +185,6 @@ const riderDetails = async (req, res) => {
         
         const schema = Joi.object({
             taskId: Joi.string().required().label('Task Id'),
-
         })
 
         const { error, value } = schema.validate(data, { abortEarly: false });

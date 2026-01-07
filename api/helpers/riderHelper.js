@@ -178,8 +178,7 @@ const cancelDeliveryTask = async (taskId) => {
     );
 
     return {
-      success: response.data.status === true,
-      statusCode: response.data.status_code,
+      success: true,
       message: response.data.message,
     };
   } catch (error) {
