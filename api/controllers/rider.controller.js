@@ -1,4 +1,4 @@
-const { checkServiceability, createDeliveryTaskFromOrder , trackTaskStatus, cancelDeliveryTask} = require("../helpers/riderHelper");
+const { checkServiceability, createDeliveryTaskFromOrder, trackTaskStatus, cancelDeliveryTask } = require("../helpers/riderHelper");
 const { sendRiderDetailsToPetPuja } = require("../helpers/petpujaHelper.js")
 const { riderBookingSchema } = require("../validations/rider.validation.js");
 const supabase = require("../../config/db.js");
@@ -110,10 +110,12 @@ const riderBooking = async (req, res) => {
         }
 
         console.log("DB DATA:", riderBookingResp);
-        const deliveryInfo = dbData.delivery_info;
-        deliveryInfo.taskId = riderBookingResp.data.taskId;
-        deliveryInfo.Status_code = riderBookingResp.data.Status_code;
-
+        const deliveryInfo = {
+            ...dbData?.delivery_info,
+            taskId: riderBookingResp.data.taskId,
+            Status_code: riderBookingResp.data.Status_code
+        }
+        console.log("deliveryInfo::", deliveryInfo)
         const { data: updateData, error: updateErr } = await supabase
             .from("orders")
             .update({
@@ -122,7 +124,7 @@ const riderBooking = async (req, res) => {
             .eq("id", order_id)
             .select()
             .single();
-
+        console.log("DB ==>", updateData, "SAMIRAN::", updateErr)
         return res.success({
             status: 200,
             data: deliveryInfo,
@@ -130,6 +132,7 @@ const riderBooking = async (req, res) => {
         })
 
     } catch (err) {
+        console.log("error::", err)
         return res.status(500).json({
             success: false,
             message: "Internal server error.",
@@ -163,7 +166,7 @@ const riderCancel = async (req, res) => {
             })
         }
 
-         return res.success({
+        return res.success({
             status: 200,
             data: cancelRiderResp,
             message: "Rider cancel request sent successfuly"
@@ -179,43 +182,89 @@ const riderCancel = async (req, res) => {
 
 const riderDetails = async (req, res) => {
     try {
-        const data = {
-            ...req.body
-        }
-        
+        const data = { ...req.body };
+
         const schema = Joi.object({
-            taskId: Joi.string().required().label('Task Id'),
-        })
+            order_id: Joi.string().required().label("Order Id"),
+        });
 
         const { error, value } = schema.validate(data, { abortEarly: false });
-
         if (error) {
             return res.error({
                 status: 400,
-                message: error.details[0].message
-            })
+                message: error.details[0].message,
+            });
         }
-        const { taskId } = value;
-        const riderDetails = await trackTaskStatus(taskId);
 
-        if(!riderDetails.success){
+        const { order_id } = value;
+
+        // 1. Fetch order
+        const { data: orderData, error: dbError } = await supabase
+            .from("orders")
+            .select("delivery_info")
+            .eq("id", order_id)
+            .single();
+
+        if (dbError || !orderData) {
+            console.log(dbError)
+            return res.error({
+                status: 404,
+                message: "Order not found",
+            });
+        }
+
+        // 2. Extract taskId
+        const taskId = orderData?.delivery_info?.taskId;
+
+        if (!taskId) {
             return res.error({
                 status: 400,
-            })
+                message: "Rider task not created for this order yet",
+            });
         }
-        const petpujaResp = await sendRiderDetailsToPetPuja(riderDetails.data);
-        console.log("petpujaResp::",petpujaResp)
+
+        /** Call Rider third party api to get rider info */
+        const riderResp = await trackTaskStatus(taskId);
+
+        if (!riderResp.success) {
+            return res.error({
+                status: 400,
+                message: "Unable to fetch rider details",
+            });
+        }
+
+        const riderData = riderResp.data;
+        await sendRiderDetailsToPetPuja(riderResp.data);
+        const deliveryInfo = {
+            ...orderData.delivery_info,
+            rider_name : riderData.rider_name,
+            rider_contact: riderData.rider_contact,
+            tracking_url: riderData.tracking_url,
+            rider_lat: riderData.latitude,
+            rider_long: riderData.longitude
+        }
+        const { data: updateData, error: updateErr } = await supabase
+            .from("orders")
+            .update({
+                delivery_info: deliveryInfo
+            })
+            .eq("id", order_id)
+            .select()
+            .single();
         return res.success({
             status: 200,
-            data: riderDetails
-        })
-    } catch (error) {
+            data: riderResp.data,
+            message: "Rider details fetched successfully",
+        });
+
+    } catch (err) {
+        console.log("riderDetails error:", err);
         return res.error({
             status: 500,
-            message: "Internal server error.",
-        })
+            message: "Internal server error",
+        });
     }
-}
+};
 
 module.exports = {
     serviceAvailability,

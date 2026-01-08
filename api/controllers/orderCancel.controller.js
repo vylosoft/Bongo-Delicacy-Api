@@ -48,7 +48,7 @@ const cancelOrder = async (req, res) => {
       });
     }
 
-    if (order.status === "cancelled") {
+    if (order.status === "CANCELLED") {
       return res.status(400).json({
         success: false,
         message: "Order already cancelled",
