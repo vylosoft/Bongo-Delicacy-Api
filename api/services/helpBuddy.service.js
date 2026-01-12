@@ -16,7 +16,7 @@ const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
 async function fetchCompleteMenu(restaurantId) {
     const cacheKey = `menu_${restaurantId}`;
     const cached = menuCache.get(cacheKey);
-    
+
     // Return cached data if valid
     if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
         console.log('📦 Using cached menu data');
@@ -26,7 +26,7 @@ async function fetchCompleteMenu(restaurantId) {
     try {
         console.log('🔄 Fetching fresh menu data from PetPooja...');
         console.log('🔑 Restaurant ID:', restaurantId);
-        
+
         const URI = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
         console.log("🌐 PetPooja URL:", URI);
 
@@ -77,7 +77,7 @@ async function fetchCompleteMenu(restaurantId) {
                 .filter(cat => cat.active === '1')
                 .map(cat => {
                     const categoryId = cat.categoryid;
-                    const categoryItems = items.filter(item => 
+                    const categoryItems = items.filter(item =>
                         item.item_categoryid == categoryId && item.active === '1'
                     );
 
@@ -118,13 +118,13 @@ async function fetchCompleteMenu(restaurantId) {
         });
 
         console.log(`✅ Menu cached for ${CACHE_DURATION / 1000 / 60} minutes`);
-        
+
         return menuData;
 
     } catch (error) {
         console.error('❌ Error in fetchCompleteMenu:', error.message);
         console.error('Stack:', error.stack);
-        
+
         // Return empty structure on error
         return {
             categories: [],
@@ -175,13 +175,13 @@ Remember: Provide excellent service even without menu access!`;
             const attributes = item.attributes ? ` [${item.attributes}]` : '';
             return `   • ${item.name} - ₹${item.price} (${vegSymbol})${description}${attributes}`;
         }).join('\n');
-        
+
         return `\n📂 ${cat.name.toUpperCase()}\n${itemsList}`;
     }).join('\n');
 
     const totalCategories = menuData.categories.length;
     const totalItems = menuData.totalItems;
-    const vegCount = menuData.categories.reduce((sum, cat) => 
+    const vegCount = menuData.categories.reduce((sum, cat) =>
         sum + cat.menus.filter(item => item.isVeg).length, 0
     );
     const nonVegCount = totalItems - vegCount;
@@ -248,7 +248,7 @@ async function generateChatResponse(history = [], userMessage, restaurantId, use
         console.log('👤 User ID:', userId || 'Guest');
         console.log('💬 User Message:', userMessage);
         console.log('📚 History length:', history.length);
-        
+
         if (!process.env.GEMINI_API_KEY) {
             throw new Error('GEMINI_API_KEY not configured in environment');
         }
@@ -256,7 +256,7 @@ async function generateChatResponse(history = [], userMessage, restaurantId, use
         // Fetch complete menu data
         console.log('\n📖 Fetching menu data...');
         const menuData = await fetchCompleteMenu(restaurantId);
-        
+
         console.log('📊 Menu data loaded:', {
             categories: menuData.categories.length,
             items: menuData.totalItems,
@@ -265,7 +265,7 @@ async function generateChatResponse(history = [], userMessage, restaurantId, use
 
         // Initialize Gemini model
         const model = genAI.getGenerativeModel(
-            { model: "gemini-2.0-flash-exp" }, 
+            { model: "gemini-2.0-flash-exp" },
             { apiVersion: 'v1beta' }
         );
 
@@ -298,11 +298,14 @@ RESPOND AS BONGO HELP BUDDY:`;
 
         console.log('\n🚀 Sending to Gemini...');
         console.log('📏 Prompt length:', fullPrompt.length);
-        
+
         // Generate response
         const result = await model.generateContent(fullPrompt);
         const response = await result.response;
-        const responseText = response.text();
+     const responseText = response.text()
+  .replace(/\*\*(.*?)\*\*/g, '$1')
+  .replace(/\*(.*?)\*/g, '$1');
+
 
         console.log('✅ Gemini response received');
         console.log('📝 Response length:', responseText.length);
@@ -327,7 +330,7 @@ RESPOND AS BONGO HELP BUDDY:`;
     } catch (error) {
         console.error('❌ GEMINI API ERROR:', error.message);
         console.error('Stack:', error.stack);
-        
+
         if (error.message?.includes('API key')) {
             throw new Error('AI service configuration error. Please contact support.');
         } else if (error.message?.includes('quota')) {
@@ -335,7 +338,7 @@ RESPOND AS BONGO HELP BUDDY:`;
         } else if (error.message?.includes('blocked')) {
             throw new Error('Unable to process this request. Please rephrase your message.');
         }
-        
+
         throw new Error(`Failed to generate response: ${error.message}`);
     }
 }
