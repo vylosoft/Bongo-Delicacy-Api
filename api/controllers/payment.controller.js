@@ -31,15 +31,41 @@ const createOrder = async (req, res) => {
     return res.status(400).json({ success: false });
   }
 
-  const { orderinfo } = value;
+  const { orderinfo, userId } = value; // ✅ only added userId
   const orderDetails = orderinfo.OrderInfo.Order.details;
   const restaurantDetails = orderinfo.OrderInfo.Restaurant.details;
+  const orderItems = orderinfo.OrderInfo.OrderItem?.details || []; // ✅ only added orderItems
 
   const clientorderID = generateOrderId();
   orderDetails.orderID = clientorderID;
   orderDetails.clientorderID = clientorderID;
 
-  // 1️⃣ PetPooja
+  // ✅ DESCRIPTION (only fix)
+  try {
+    if (userId) {
+      const prefs = await fetchUserPreferences(userId);
+
+      const restaurantName =
+        restaurantDetails.restName || restaurantDetails.name || "Restaurant";
+
+      const ai = await generateOrderDescription(
+        prefs,
+        orderItems,
+        restaurantName
+      );
+
+      // ✅ support both: string OR { description }
+      orderDetails.description =
+        typeof ai === "string" ? ai : ai?.description || "";
+    } else {
+      orderDetails.description = "";
+    }
+  } catch (err) {
+    console.error("AI description failed:", err);
+    orderDetails.description = "";
+  }
+
+  // 1️⃣ PetPooja (unchanged)
   try {
     await placeOrderWithPetpuja(orderinfo);
   } catch {
@@ -48,25 +74,8 @@ const createOrder = async (req, res) => {
       message: "PetPooja order failed",
     });
   }
-try {
-  if (userId) {
-    const prefs = await fetchUserPreferences(userId);
-    const restaurantName =
-      restaurantDetails.restName || restaurantDetails.name || "Restaurant";
 
-    const ai = await generateOrderDescription(
-      prefs,
-      orderItems,
-      restaurantName
-    );
-
-    orderDetails.description = ai.description;
-  }
-} catch {
-  orderDetails.description = "";
-}
-
-  // 2️⃣ Razorpay
+  // 2️⃣ Razorpay (unchanged)
   try {
     const razorpay = new Razorpay({
       key_id: env.RAZORPAY_KEY_ID,
@@ -97,6 +106,7 @@ try {
     });
   }
 };
+
 
 /* -------------------------------------------------------
    VERIFY PAYMENT + CREATE DB ORDER
