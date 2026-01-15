@@ -38,43 +38,57 @@ const addResturent = async (req, res) => {
     const { error } = addResturentSchema(req.body);
     if (error) return res.status(400).json({ error: error.details[0].message });
 
-    const { rest_id, theme_primary, theme_accent, theme_text_on_primary } = req.body;
-    const petpujaUrl = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
+    const {
+      rest_id,
+      name,
+      tagline,
+      description,
+      logo,
+      hero_image,
+      about_text,
+      about_image,
+      theme_primary,
+      theme_accent,
+      theme_text_on_primary,
+      Latitude,
+      Longitude,
+    } = req.body;
 
+    const petpujaUrl = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
     const petRes = await petpujaService(petpujaUrl, { restID: rest_id });
 
     if (!petRes?.restaurants?.length) {
       return res.status(404).json({ error: "Restaurant not found in PetPuja" });
     }
 
-    const info = petRes.restaurants[0];
-
     const payload = {
       rest_id,
-      name: info.restaurantname || info.name || "",
-      tagline: info.tagline || "",
-      description: info.description || "",
-      logo: info.logo || info.images?.[0] || DEFAULT_IMAGE,
-      hero_image: info.hero_image || DEFAULT_IMAGE,
-      about_text: info.about_text || "",
-      about_image: info.about_image || DEFAULT_IMAGE,
+      name,
+      tagline,
+      description,
+      logo,
+      hero_image,
+      about_text,
+      about_image,
       theme_primary,
       theme_accent,
       theme_text_on_primary,
+      Latitude,
+      Longitude,
     };
 
     const { data, error: dbError } = await supabase
       .from("restaurants")
       .insert([payload])
-      .select();
+      .select()
+      .single();
 
     if (dbError) return res.status(400).json({ error: dbError.message });
 
     return res.status(201).json({
       message: "Restaurant created successfully",
-      restaurant: data[0],
+      restaurant: data,
     });
-
   } catch (err) {
     console.error("addResturent:", err);
     return res.status(500).json({ error: "Internal server error" });
