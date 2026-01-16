@@ -23,12 +23,23 @@ const placeOrderWithPetpuja = async (orderinfo) => {
     orderinfo
   };
 
+  // ✅ Safe log (recommended)
+  const safePayload = {
+    ...payload,
+    app_key: payload.app_key ? `${payload.app_key.slice(0, 4)}****` : null,
+    app_secret: payload.app_secret ? `${payload.app_secret.slice(0, 4)}****` : null,
+    access_token: payload.access_token ? `${payload.access_token.slice(0, 6)}****` : null
+  };
+
+  console.log("PetPooja /save_order payload:", JSON.stringify(safePayload, null, 2));
+
+  // ❗ If you really want full payload (use only in local dev)
+   console.log("FULL payload:", JSON.stringify(payload, null, 2));
+
   try {
     const { data } = await petpujaClient.post("/save_order", payload);
-    // You can add extra checks here based on PetPooja's success flag
     return data;
   } catch (error) {
-    // normalize error
     const errData = error.response?.data || error.message || error;
     const status = error.response?.status || 500;
     const e = new Error("Failed to place order with PetPooja");
@@ -37,6 +48,7 @@ const placeOrderWithPetpuja = async (orderinfo) => {
     throw e;
   }
 };
+
 
 /**
  * Cancel PetPooja order (update_order_status)
