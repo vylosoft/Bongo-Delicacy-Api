@@ -125,9 +125,9 @@ const sendRiderDetailsToPetPuja = async (riderInfo) => {
     }
     console.log("update rider status to petpuja:::", payload);
     try {
-      const { data } = await petpujaClient.post(
-        "/rider_info_webhook",
-        payload
+      const { data } = await post(
+        "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/rider_status_update",
+        payload,
       );
       return {
         success: true,

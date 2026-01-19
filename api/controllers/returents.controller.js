@@ -5,11 +5,53 @@ const { createClient } = require('@supabase/supabase-js');
 // const supabase = require("../../config/db");
 const SUPABASE_URL = 'https://nldgaczpzfmwamivniua.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZGdhY3pwemZtd2FtaXZuaXVhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjYyNzA5NSwiZXhwIjoyMDc4MjAzMDk1fQ.sLnOMjKs-WJu9IyAaLUzLCmKZl0-Ph32-ElUT2MbWYY';
-
+const multer = require("multer");
+const upload = multer({ storage: multer.memoryStorage() });
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const DEFAULT_IMAGE = "https://via.placeholder.com/400x300?text=No+Image";
+const uploadRestaurantImage = async (req, res) => {
+  try {
+    const rest_id = req.body.rest_id;
+    const type = req.body.type; // logo | hero | about
 
+    if (!rest_id) return res.status(400).json({ error: "rest_id is required" });
+    if (!type) return res.status(400).json({ error: "type is required" });
+    if (!req.file) return res.status(400).json({ error: "file is required" });
+
+    const allowed = ["logo", "hero", "about"];
+    if (!allowed.includes(type)) {
+      return res.status(400).json({ error: "Invalid type" });
+    }
+
+    const ext = (req.file.originalname.split(".").pop() || "jpg").toLowerCase();
+    const filePath = `restaurants/${rest_id}/${type}-${Date.now()}.${ext}`;
+
+    // IMPORTANT: use a real bucket name
+    const BUCKET = "restaurant-images";
+
+    const { error: upErr } = await supabase.storage
+      .from(BUCKET)
+      .upload(filePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true,
+      });
+
+    if (upErr) return res.status(400).json({ error: upErr.message });
+
+    // public url (works only if bucket is public)
+    const { data } = supabase.storage.from(BUCKET).getPublicUrl(filePath);
+
+    return res.status(200).json({
+      message: "Uploaded",
+      url: data.publicUrl,
+      path: filePath,
+    });
+  } catch (err) {
+    console.error("uploadRestaurantImage:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
 const fetchResturentByMappingId = async (req, res) => {
   try {
     const reqBody = { ...req.query };
@@ -192,4 +234,11 @@ const toggleTableStatus = async (req, res) => {
   }
 };
 
-module.exports = { fetchResturentByMappingId, addResturent, addResturentTable, getTablesByRestaurant, toggleTableStatus };
+module.exports = {
+  fetchResturentByMappingId,
+  addResturent,
+  addResturentTable,
+  getTablesByRestaurant,
+  toggleTableStatus,
+  uploadRestaurantImage,
+};
