@@ -8,5 +8,7 @@ router.use("/reservation", require("./reservation.routes.js") );
 router.use("/complaints", require("./complaint.routes.js") );
 router.use('/ai', require('./ai.routes'));
 router.use('/rider', require('./rider.routes.js'));
+router.use("/webhooks", require("./webhooks.routes.js"));
+
 module.exports = router;
 
