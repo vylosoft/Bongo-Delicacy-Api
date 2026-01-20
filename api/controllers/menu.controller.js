@@ -1,8 +1,89 @@
-const Joi = require('joi');
-const { fetchMenuCatagoryByResturentSchema, fetchMenuByCatagorySchema ,fetchAdminMenuWithCategorySchema } = require('../validations/menu.validation');
-const { petpujaService } = require('../../utils/petpujaService');
+const Joi = require("joi");
+const {
+  fetchMenuCatagoryByResturentSchema,
+  fetchMenuByCatagorySchema,
+  fetchAdminMenuWithCategorySchema,
+} = require("../validations/menu.validation");
+const { petpujaService } = require("../../utils/petpujaService");
 const { supabase } = require("../../utils/supabaseClient");
+const crypto = require("crypto");
 
+/**
+ * Hash payload (used if we do fallback-to-live and want to cache it)
+ */
+const hashPayload = (payload) => {
+  const raw = JSON.stringify(payload);
+  return crypto.createHash("sha256").update(raw).digest("hex");
+};
+
+/**
+ * Your webhook payload might be:
+ * 1) already flat: { categories, items, taxes, ... }
+ * 2) nested: { success, restaurants: [ { categories, items, taxes, ... } ] }
+ *
+ * This ensures the controller always gets the same structure it expects.
+ */
+const normalizePetpoojaPayload = (payload) => {
+  if (!payload) return payload;
+
+  // already flat response shape
+  if (payload.categories || payload.items || payload.taxes) return payload;
+
+  // nested under restaurants[0]
+  const r0 = payload?.restaurants?.[0];
+  if (r0 && (r0.categories || r0.items || r0.taxes)) return r0;
+
+  return payload;
+};
+
+/**
+ * DB-first menu source:
+ * - Uses cached webhook payload from petpooja_menu_cache
+ * - If not found, (optional) falls back to PetPooja and caches it
+ *
+ * If you want STRICT DB-only: set ALLOW_FALLBACK_TO_LIVE=false
+ */
+const ALLOW_FALLBACK_TO_LIVE = true;
+
+const getMenuSource = async (resturent_identifier) => {
+  const rest_id = String(resturent_identifier || "").trim();
+  if (!rest_id) return null;
+
+  // 1) Try DB cache first
+  const { data: cacheRow, error: cacheErr } = await supabase
+    .from("petpooja_menu_cache")
+    .select("payload,version_hash,last_pushed_at")
+    .eq("rest_id", rest_id)
+    .maybeSingle();
+
+  if (!cacheErr && cacheRow?.payload) {
+    return normalizePetpoojaPayload(cacheRow.payload);
+  }
+
+  if (!ALLOW_FALLBACK_TO_LIVE) return null;
+
+  // 2) Fallback to live PetPooja (optional)
+  // const URI = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
+  // const live = await petpujaService(URI, { restID: rest_id });
+
+  // cache it for next time
+  const payloadToStore = live;
+  const version_hash = hashPayload(payloadToStore);
+  const now = new Date().toISOString();
+
+  await supabase.from("petpooja_menu_cache").upsert(
+    {
+      rest_id,
+      payload: payloadToStore,
+      version_hash,
+      last_pushed_at: now,
+      updated_at: now,
+    },
+    { onConflict: "rest_id" }
+  );
+
+  return normalizePetpoojaPayload(live);
+};
 
 const getStockMap = async (rest_id) => {
   try {
@@ -33,8 +114,8 @@ const applyAvailability = (item, stockMap) => {
 
   return {
     ...item,
-    available: isAvailable,              // ✅ your new field
-    active: isAvailable ? item.active : "0", // ✅ force inactive when OFF
+    available: isAvailable,
+    active: isAvailable ? item.active : "0",
   };
 };
 
@@ -53,10 +134,14 @@ exports.fetchMenuCatagoryByResturent = async (req, res) => {
     const { resturent_identifier } = validateSchema.value;
 
     try {
-      const URI = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
-      const requestBody = { restID: resturent_identifier };
+      const responseData = await getMenuSource(resturent_identifier);
 
-      const responseData = await petpujaService(URI, requestBody);
+      if (!responseData) {
+        return res.error({
+          message: "Menu not cached yet",
+          status: 404,
+        });
+      }
 
       const catagories = (responseData.categories || []).map((i) => ({
         id: i.categoryid,
@@ -88,8 +173,13 @@ exports.fetchMenuByCatagory = async (req, res) => {
 
     const { resturent_identifier, category_id } = validateSchema.value;
 
-    const URI = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
-    const responseData = await petpujaService(URI, { restID: resturent_identifier });
+    const responseData = await getMenuSource(resturent_identifier);
+    if (!responseData) {
+      return res.error({
+        message: "Menu not cached yet",
+        status: 404,
+      });
+    }
 
     // Build tax lookup: taxid -> tax object
     const taxMap = new Map((responseData.taxes || []).map((t) => [String(t.taxid), t]));
@@ -99,7 +189,7 @@ exports.fetchMenuByCatagory = async (req, res) => {
       (item) => String(item.item_categoryid) === String(category_id)
     );
 
-    // ✅ stock overrides
+    // stock overrides
     const stockMap = await getStockMap(resturent_identifier);
 
     const result = itemsByCategory.map((item) => {
@@ -174,15 +264,18 @@ exports.fetchAdminMenuWithCategory = async (req, res) => {
 
     const { resturent_identifier } = validateSchema.value;
 
-    const URI = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
-    const requestBody = { restID: resturent_identifier };
-
-    const responseData = await petpujaService(URI, requestBody);
+    const responseData = await getMenuSource(resturent_identifier);
+    if (!responseData) {
+      return res.error({
+        message: "Menu not cached yet",
+        status: 404,
+      });
+    }
 
     const categories = responseData?.categories || [];
     const items = responseData?.items || [];
 
-    // ✅ stock overrides
+    // stock overrides
     const stockMap = await getStockMap(resturent_identifier);
 
     // attach availability for all items

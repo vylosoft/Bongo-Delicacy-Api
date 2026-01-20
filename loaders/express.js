@@ -34,7 +34,10 @@ module.exports = ({ app }) => {
     console.log("PetPooja STORE STATUS:", req.body);
     return res.status(200).json({ ok: true, is_open: true });
   });
-
+  app.post("/webhooks/petpooja/push-menu", (req, res) => {
+    console.log("PetPooja STORE STATUS:", req.body);
+    return res.status(200).json({ ok: true, is_open: true });
+  });
   app.use(notFound);
   app.use(errorHandler);
 };

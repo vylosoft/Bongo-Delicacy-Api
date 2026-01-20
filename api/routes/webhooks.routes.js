@@ -1,6 +1,16 @@
 const router = require("express").Router();
 const { itemStockWebhook } = require("../controllers/webhooks/stockWebhook.controller");
+const petpoojaMenuController = require("../controllers/webhooks/petpoojaMenu.controller");
 
+const {
+  handlePetPoojaStoreWebhook,
+} = require("../controllers/webhooks/petpoojaStore.controller");
+
+router.post("/store-update", handlePetPoojaStoreWebhook);
+router.post("/store-status", handlePetPoojaStoreWebhook);
+
+router.post("/push-menu", petpoojaMenuController.pushMenuWebhook);
+router.get("/cached-menu", petpoojaMenuController.getCachedMenu);
 router.post("/item-stock", itemStockWebhook);
 
 module.exports = router;
