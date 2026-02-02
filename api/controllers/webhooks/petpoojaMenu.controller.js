@@ -46,16 +46,19 @@ async function uploadImage(buffer, rest_id, itemid) {
     .from("menu-images")
     .upload(path, buffer, {
       contentType: "image/jpeg",
-      upsert: true, // IMPORTANT: overwrite old image
+      upsert: true,
     });
 
   if (error) throw error;
 
-  return supabase.storage.from("menu-images").getPublicUrl(path).data.publicUrl;
+  return supabase.storage
+    .from("menu-images")
+    .getPublicUrl(path).data.publicUrl;
 }
 
 /**
- * Replace PetPooja image URLs with permanent Supabase URLs
+ * Images are NOT stored in DB.
+ * Only URLs inside payload are replaced.
  */
 async function persistMenuImages(payload, rest_id) {
   const restaurant = payload?.restaurants?.[0];
@@ -66,15 +69,11 @@ async function persistMenuImages(payload, rest_id) {
   for (const item of restaurant.items) {
     if (!item.itemid) continue;
     if (!item.item_image_url) continue;
-
-    // Already replaced
     if (item.item_image_url.includes("supabase")) continue;
 
     try {
       const buffer = await downloadImage(item.item_image_url);
       const permanentUrl = await uploadImage(buffer, rest_id, item.itemid);
-
-      // 🔥 REPLACE URL IN PAYLOAD
       item.item_image_url = permanentUrl;
     } catch (err) {
       console.error(`Image failed for item ${item.itemid}:`, err.message);
@@ -95,9 +94,11 @@ export const pushMenuWebhook = async (req, res) => {
 
     const rawPayload = req.body;
 
-    const menusharingcode =
-      rawPayload?.restaurants?.[0]?.details?.menusharingcode;
-    const restaurantid = rawPayload?.restaurants?.[0]?.restaurantid;
+    const restaurant = rawPayload?.restaurants?.[0];
+    const details = restaurant?.details || {};
+
+    const menusharingcode = details.menusharingcode;
+    const restaurantid = restaurant?.restaurantid;
 
     const rest_id = String(menusharingcode || restaurantid || "").trim();
 
@@ -108,18 +109,22 @@ export const pushMenuWebhook = async (req, res) => {
       });
     }
 
+    const restaurant_name = details.restaurantname || null;
+    const latitude = details.latitude ? Number(details.latitude) : null;
+    const longitude = details.longitude ? Number(details.longitude) : null;
+    const restaurant_id = restaurantid ? String(restaurantid) : null;
+
+    // 🔒 explicitly keep restaurant open
+    const isclosed = false;
+
     const now = new Date().toISOString();
 
-    // Get existing cache
     const { data: existing } = await supabase
       .from("petpooja_menu_cache")
       .select("version_hash")
       .eq("rest_id", rest_id)
       .maybeSingle();
 
-    const incomingHash = hashPayload(rawPayload);
-
-    // Clone & replace image URLs
     const finalPayload = await persistMenuImages(
       structuredClone(rawPayload),
       rest_id,
@@ -127,7 +132,6 @@ export const pushMenuWebhook = async (req, res) => {
 
     const finalHash = hashPayload(finalPayload);
 
-    // Skip if nothing changed
     if (existing && existing.version_hash === finalHash) {
       return res.status(200).json({
         ok: true,
@@ -136,12 +140,16 @@ export const pushMenuWebhook = async (req, res) => {
       });
     }
 
-    // Upsert cache
     const { error: upsertError } = await supabase
       .from("petpooja_menu_cache")
       .upsert(
         {
           rest_id,
+          restaurant_id,
+          restaurant_name,
+          latitude,
+          longitude,
+          isclosed, // 👈 always false
           payload: finalPayload,
           version_hash: finalHash,
           last_pushed_at: now,
@@ -177,7 +185,9 @@ export const getCachedMenu = async (req, res) => {
 
     const { data, error } = await supabase
       .from("petpooja_menu_cache")
-      .select("payload,last_pushed_at,version_hash")
+      .select(
+        "payload,last_pushed_at,version_hash,restaurant_name,latitude,longitude,isclosed",
+      )
       .eq("rest_id", rest_id)
       .maybeSingle();
 
