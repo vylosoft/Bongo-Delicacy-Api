@@ -1,85 +1,178 @@
-const crypto = require("crypto");
-const Joi = require("joi");
-const { supabase } = require("../../../utils/supabaseClient");
+import crypto from "crypto";
+import fetch from "node-fetch";
+import Joi from "joi";
+import { supabase } from "../../../utils/supabaseClient.js";
 
-// Validate only minimum fields; do not “shape” the payload you store
+/* -------------------- VALIDATION -------------------- */
+
 const pushMenuSchema = Joi.object({
   success: Joi.string().required(),
   restaurants: Joi.array()
     .items(
       Joi.object({
-        restaurantid: Joi.alternatives().try(Joi.string(), Joi.number()).required(),
-      }).unknown(true)
+        restaurantid: Joi.alternatives()
+          .try(Joi.string(), Joi.number())
+          .required(),
+      }).unknown(true),
     )
     .min(1)
     .required(),
 }).unknown(true);
 
-const hashPayload = (payload) => {
-  // hash based on exactly what we store (object form)
-  const raw = JSON.stringify(payload);
-  return crypto.createHash("sha256").update(raw).digest("hex");
-};
+/* -------------------- HELPERS -------------------- */
 
-exports.pushMenuWebhook = async (req, res) => {
+const hashPayload = (payload) =>
+  crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+
+async function downloadImage(url) {
+  const res = await fetch(url, { timeout: 10000 });
+
+  if (!res.ok) {
+    throw new Error(`Image fetch failed: ${res.status}`);
+  }
+
+  const type = res.headers.get("content-type") || "";
+  if (!type.startsWith("image/")) {
+    throw new Error("URL is not an image");
+  }
+
+  return Buffer.from(await res.arrayBuffer());
+}
+
+async function uploadImage(buffer, rest_id, itemid) {
+  const path = `menus/${rest_id}/${itemid}.jpg`;
+
+  const { error } = await supabase.storage
+    .from("menu-images")
+    .upload(path, buffer, {
+      contentType: "image/jpeg",
+      upsert: true, // IMPORTANT: overwrite old image
+    });
+
+  if (error) throw error;
+
+  return supabase.storage.from("menu-images").getPublicUrl(path).data.publicUrl;
+}
+
+/**
+ * Replace PetPooja image URLs with permanent Supabase URLs
+ */
+async function persistMenuImages(payload, rest_id) {
+  const restaurant = payload?.restaurants?.[0];
+  if (!restaurant?.items || !Array.isArray(restaurant.items)) {
+    return payload;
+  }
+
+  for (const item of restaurant.items) {
+    if (!item.itemid) continue;
+    if (!item.item_image_url) continue;
+
+    // Already replaced
+    if (item.item_image_url.includes("supabase")) continue;
+
+    try {
+      const buffer = await downloadImage(item.item_image_url);
+      const permanentUrl = await uploadImage(buffer, rest_id, item.itemid);
+
+      // 🔥 REPLACE URL IN PAYLOAD
+      item.item_image_url = permanentUrl;
+    } catch (err) {
+      console.error(`Image failed for item ${item.itemid}:`, err.message);
+    }
+  }
+
+  return payload;
+}
+
+/* -------------------- WEBHOOK -------------------- */
+
+export const pushMenuWebhook = async (req, res) => {
   try {
-    // validate only, but store req.body (full webhook object)
     const { error } = pushMenuSchema.validate(req.body);
     if (error) {
       return res.status(400).json({ ok: false, message: error.message });
     }
 
-    // IMPORTANT: store full webhook payload
-    const payload = req.body;
+    const rawPayload = req.body;
 
-    // choose your primary id safely
-    const menusharingcode = payload?.restaurants?.[0]?.details?.menusharingcode;
-    const restaurantid = payload?.restaurants?.[0]?.restaurantid;
+    const menusharingcode =
+      rawPayload?.restaurants?.[0]?.details?.menusharingcode;
+    const restaurantid = rawPayload?.restaurants?.[0]?.restaurantid;
 
     const rest_id = String(menusharingcode || restaurantid || "").trim();
+
     if (!rest_id) {
-      return res.status(400).json({ ok: false, message: "rest_id not found in payload" });
+      return res.status(400).json({
+        ok: false,
+        message: "rest_id not found",
+      });
     }
 
-    const version_hash = hashPayload(payload);
     const now = new Date().toISOString();
 
-    // 1) Store full history event
-    await supabase.from("petpooja_menu_events").insert([
-      { rest_id, payload, version_hash, created_at: now },
-    ]);
+    // Get existing cache
+    const { data: existing } = await supabase
+      .from("petpooja_menu_cache")
+      .select("version_hash")
+      .eq("rest_id", rest_id)
+      .maybeSingle();
 
-    // 2) Upsert latest cache (full payload)
+    const incomingHash = hashPayload(rawPayload);
+
+    // Clone & replace image URLs
+    const finalPayload = await persistMenuImages(
+      structuredClone(rawPayload),
+      rest_id,
+    );
+
+    const finalHash = hashPayload(finalPayload);
+
+    // Skip if nothing changed
+    if (existing && existing.version_hash === finalHash) {
+      return res.status(200).json({
+        ok: true,
+        skipped: true,
+        reason: "menu unchanged",
+      });
+    }
+
+    // Upsert cache
     const { error: upsertError } = await supabase
       .from("petpooja_menu_cache")
       .upsert(
         {
           rest_id,
-          payload, // FULL DATA from webhook
-          version_hash,
+          payload: finalPayload,
+          version_hash: finalHash,
           last_pushed_at: now,
           updated_at: now,
         },
-        { onConflict: "rest_id" }
+        { onConflict: "rest_id" },
       );
 
     if (upsertError) {
-      console.error("pushMenuWebhook upsert error:", upsertError);
+      console.error("Cache upsert failed:", upsertError);
       return res.status(500).json({ ok: false });
     }
 
     return res.status(200).json({ ok: true });
-  } catch (e) {
-    console.error("pushMenuWebhook error:", e);
+  } catch (err) {
+    console.error("Webhook error:", err);
     return res.status(500).json({ ok: false });
   }
 };
 
-exports.getCachedMenu = async (req, res) => {
+/* -------------------- GET CACHED MENU -------------------- */
+
+export const getCachedMenu = async (req, res) => {
   try {
     const rest_id = String(req.query.resturent_identifier || "").trim();
+
     if (!rest_id) {
-      return res.status(400).json({ ok: false, message: "resturent_identifier is required" });
+      return res.status(400).json({
+        ok: false,
+        message: "resturent_identifier required",
+      });
     }
 
     const { data, error } = await supabase
@@ -89,12 +182,15 @@ exports.getCachedMenu = async (req, res) => {
       .maybeSingle();
 
     if (error || !data) {
-      return res.status(404).json({ ok: false, message: "Menu not cached yet" });
+      return res.status(404).json({
+        ok: false,
+        message: "Menu not cached yet",
+      });
     }
 
     return res.status(200).json({ ok: true, data });
-  } catch (e) {
-    console.error("getCachedMenu error:", e);
+  } catch (err) {
+    console.error("getCachedMenu error:", err);
     return res.status(500).json({ ok: false });
   }
 };
