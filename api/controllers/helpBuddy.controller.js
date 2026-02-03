@@ -11,7 +11,7 @@ const helpBuddyChatSchema = Joi.object({
         })
     ).default([]),
     userMessage: Joi.string().required().trim().min(1).max(1000),
-    restaurantId: Joi.string().required(),
+    restaurantId: Joi.string().optional(),
     userId: Joi.string().optional().allow(null, '') // Optional userId
 });
 

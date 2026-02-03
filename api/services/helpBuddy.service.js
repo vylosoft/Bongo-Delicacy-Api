@@ -1,6 +1,6 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { petpujaService } = require('../../utils/petpujaService');
 
+const { supabase } = require('../../utils/supabaseClient');
 // Initialize Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -241,6 +241,61 @@ Remember: You represent Bongo Delicacy's brand. Be professional, helpful, and ma
 /**
  * Generate chat response using Gemini API
  */
+async function fetchMenuFromAnyPayload() {
+    const { data, error } = await supabase
+        .from('petpooja_menu_cache')
+        .select('payload, updated_at')
+        .order('updated_at', { ascending: false });
+
+    if (error || !data || data.length === 0) {
+        throw new Error('No menu payloads found in DB');
+    }
+
+    const allCategories = [];
+    const allItems = [];
+
+    for (const row of data) {
+        const payload = row.payload;
+
+        if (
+            payload &&
+            payload.success == 1 &&
+            Array.isArray(payload.categories) &&
+            Array.isArray(payload.items)
+        ) {
+            allCategories.push(...payload.categories);
+            allItems.push(...payload.items);
+        }
+    }
+
+    if (allCategories.length === 0 || allItems.length === 0) {
+        throw new Error('No valid menu data found in payloads');
+    }
+
+    // 🔒 Deduplicate categories by categoryid
+    const categoryMap = new Map();
+    allCategories.forEach(cat => {
+        if (!categoryMap.has(cat.categoryid)) {
+            categoryMap.set(cat.categoryid, cat);
+        }
+    });
+
+    // 🔒 Deduplicate items by itemid
+    const itemMap = new Map();
+    allItems.forEach(item => {
+        if (!itemMap.has(item.itemid)) {
+            itemMap.set(item.itemid, item);
+        }
+    });
+
+    return {
+        success: 1,
+        categories: Array.from(categoryMap.values()),
+        items: Array.from(itemMap.values())
+    };
+}
+
+
 async function generateChatResponse(history = [], userMessage, restaurantId, userId = null) {
     try {
         console.log('\n🤖 ========== GEMINI CHAT REQUEST ==========');
@@ -255,17 +310,53 @@ async function generateChatResponse(history = [], userMessage, restaurantId, use
 
         // Fetch complete menu data
         console.log('\n📖 Fetching menu data...');
-        const menuData = await fetchCompleteMenu(restaurantId);
+        const payload = await fetchMenuFromAnyPayload();
+
+        const categories = payload.categories || [];
+        const items = payload.items || [];
+
+        const menuData = {
+            categories: categories
+                .filter(cat => cat.active === '1')
+                .map(cat => {
+                    const categoryId = cat.categoryid;
+                    const categoryItems = items.filter(
+                        item => item.item_categoryid == categoryId && item.active === '1'
+                    );
+
+                    return {
+                        id: categoryId,
+                        name: cat.categoryname,
+                        menus: categoryItems.map(item => ({
+                            id: item.itemid,
+                            name: item.itemname,
+                            description: item.itemdescription || item.item_description || '',
+                            price: parseFloat(item.price) || 0,
+                            isVeg: item.item_attributeid === '1',
+                            attributes: item.item_attributename || ''
+                        }))
+                    };
+                })
+                .filter(cat => cat.menus.length > 0),
+
+            totalItems: items.filter(i => i.active === '1').length,
+            lastUpdated: new Date().toISOString()
+        };
+
+        console.log('Merged menu:', {
+            categories: categories.length,
+            items: items.length
+        });
 
         console.log('📊 Menu data loaded:', {
             categories: menuData.categories.length,
-            items: menuData.totalItems,
-            hasError: !!menuData.error
+            items: menuData.totalItems
         });
+
 
         // Initialize Gemini model
         const model = genAI.getGenerativeModel(
-            { model: "gemini-2.0-flash-exp" },
+            { model: "gemini-2.5-flash" },
             { apiVersion: 'v1beta' }
         );
 
@@ -302,9 +393,9 @@ RESPOND AS BONGO HELP BUDDY:`;
         // Generate response
         const result = await model.generateContent(fullPrompt);
         const response = await result.response;
-     const responseText = response.text()
-  .replace(/\*\*(.*?)\*\*/g, '$1')
-  .replace(/\*(.*?)\*/g, '$1');
+        const responseText = response.text()
+            .replace(/\*\*(.*?)\*\*/g, '$1')
+            .replace(/\*(.*?)\*/g, '$1');
 
 
         console.log('✅ Gemini response received');
@@ -319,10 +410,11 @@ RESPOND AS BONGO HELP BUDDY:`;
                     categoriesCount: menuData.categories.length,
                     itemsCount: menuData.totalItems,
                     lastUpdated: menuData.lastUpdated,
-                    hasError: !!menuData.error
+                    hasError: false
+
                 },
                 userId: userId || null,
-                model: 'gemini-2.0-flash-exp',
+                model: 'gemini-2.5-flash',
                 timestamp: new Date().toISOString()
             }
         };
