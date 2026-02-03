@@ -2,14 +2,82 @@ const Joi = require('joi');
 const { fetchResturentByMappingIdSchema, addResturentSchema, addResturentTableSchema } = require('../validations/resturent.validation');
 const { petpujaService } = require('../../utils/petpujaService');
 const { createClient } = require('@supabase/supabase-js');
-// const supabase = require("../../config/db");
+const supabase = require("../../config/db");
 const SUPABASE_URL = 'https://nldgaczpzfmwamivniua.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZGdhY3pwemZtd2FtaXZuaXVhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjYyNzA5NSwiZXhwIjoyMDc4MjAzMDk1fQ.sLnOMjKs-WJu9IyAaLUzLCmKZl0-Ph32-ElUT2MbWYY';
 const multer = require("multer");
 const upload = multer({ storage: multer.memoryStorage() });
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const { getAllSchema } = require("../validations/resturent.validation");
+// const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const DEFAULT_IMAGE = "https://via.placeholder.com/400x300?text=No+Image";
+
+const getAll = async (req, res) => {
+  try {
+    const payload = {
+      ...req.query
+    };
+    const { value, error } = getAllSchema(payload);
+    if (error) {
+      return res.error({
+        message: error.details.map((e) => e.message).join(", "),
+        status: 400
+      });
+    }
+
+    const page = Number(req.query.page) || 1;
+    const perPage = Number(req.query.per_page) || 20;
+
+    const from = (page - 1) * perPage;
+    const to = from + perPage - 1;
+
+    const {
+      data,
+      error: dbError,
+      count
+    } = await supabase.from("restaurants").select("*", { count: "exact" }).range(from, to);
+    if (dbError) {
+      console.log(dbError)
+      return res.error({
+        message: "Error occured during fetching the data",
+        status: 500
+      });
+    }
+    return res.success({ data: { result: data, count }});
+  } catch (error) {
+    console.log(error)
+    return res.error({
+      message: "Internal server error",
+      status: 500
+    });
+  }
+};
+
+const getDetails = async(req,res) =>{
+  try {
+    const uuid = req.params.uuid;
+
+    const {
+      data,
+      error: dbError,
+    } = await supabase.from("restaurants").select("*").eq("id", uuid).single();
+    if (dbError) {
+      console.log(dbError)
+      return res.error({
+        message: "Error occured during fetching the data",
+        status: 500
+      });
+    }
+    return res.success({ data: data });
+  } catch (error) {
+    console.log(error)
+    return res.error({
+      message: "Internal server error",
+      status: 500
+    });
+  }
+}
+
 const uploadRestaurantImage = async (req, res) => {
   try {
     const rest_id = req.body.rest_id;
@@ -241,4 +309,6 @@ module.exports = {
   getTablesByRestaurant,
   toggleTableStatus,
   uploadRestaurantImage,
+  getAll,
+  getDetails
 };

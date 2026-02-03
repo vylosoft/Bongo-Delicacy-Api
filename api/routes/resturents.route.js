@@ -7,32 +7,31 @@ const upload = multer({ storage: multer.memoryStorage() });
 const {
   resolveRestaurant,
 } = require("../controllers/restaurantResolver.controller");
-const {
-  fetchResturentByMappingId,
-  addResturent,
-  addResturentTable,
-  getTablesByRestaurant,
-  toggleTableStatus,
-  uploadRestaurantImage, // ✅ import this
-} = require("../controllers/returents.controller");
 
-// Fetch restaurant using mappingId
-router.get("/restaurant-by-mappingId", fetchResturentByMappingId);
+const resturentController = require("../controllers/returents.controller");
 
-// Add restaurant (DB insert only)
-router.post("/add", addResturent);
+router.get("/", resturentController.getAll);
 
-// Upload image to Supabase storage and return URL
-router.post("/upload-image", upload.single("file"), uploadRestaurantImage);
-
-// Add table
-router.post("/:rest_id/addTable", addResturentTable);
+router.get("/:uuid", resturentController.getDetails);
 
 // Get tables
-router.get("/:rest_id/tables", getTablesByRestaurant);
+router.get("/:rest_id/tables", resturentController.getTablesByRestaurant);
+
+
+// Fetch restaurant using mappingId
+router.get("/restaurant-by-mappingId", resturentController.fetchResturentByMappingId);
+
+// Add restaurant (DB insert only)
+router.post("/add", resturentController.addResturent);
+
+// Upload image to Supabase storage and return URL
+router.post("/upload-image", upload.single("file"), resturentController.uploadRestaurantImage);
+
+// Add table
+router.post("/:rest_id/addTable", resturentController.addResturentTable);
 
 // Toggle table active/inactive
-router.patch("/table/:table_id/toggleStatus", toggleTableStatus);
+router.patch("/table/:table_id/toggleStatus", resturentController.toggleTableStatus);
 // Resolve nearest open outlet by restaurant name + location
 router.post("/resolve-by-name", resolveRestaurant);
 
