@@ -61,12 +61,11 @@ async function uploadImage(buffer, rest_id, itemid) {
  * Only URLs inside payload are replaced.
  */
 async function persistMenuImages(payload, rest_id) {
-  const restaurant = payload?.restaurants?.[0];
-  if (!restaurant?.items || !Array.isArray(restaurant.items)) {
+  if (!Array.isArray(payload.items)) {
     return payload;
   }
 
-  for (const item of restaurant.items) {
+  for (const item of payload.items) {
     if (!item.itemid) continue;
     if (!item.item_image_url) continue;
     if (item.item_image_url.includes("supabase")) continue;
@@ -76,7 +75,10 @@ async function persistMenuImages(payload, rest_id) {
       const permanentUrl = await uploadImage(buffer, rest_id, item.itemid);
       item.item_image_url = permanentUrl;
     } catch (err) {
-      console.error(`Image failed for item ${item.itemid}:`, err.message);
+      console.error(
+        `Image failed for item ${item.itemid}:`,
+        err.message
+      );
     }
   }
 
@@ -149,7 +151,7 @@ export const pushMenuWebhook = async (req, res) => {
           restaurant_name,
           latitude,
           longitude,
-          isclosed, // 👈 always false
+          isclosed,
           payload: finalPayload,
           version_hash: finalHash,
           last_pushed_at: now,
