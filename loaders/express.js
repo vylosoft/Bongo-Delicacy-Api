@@ -14,33 +14,6 @@ module.exports = ({ app }) => {
 
 
   app.use("/api", rateLimiter, routes);
-
-  // -----------------------------
-  // PetPooja Webhooks (no /api)
-  // -----------------------------
-  app.post("/webhooks/petpooja/item-off", (req, res) => {
-    console.log("PetPooja ITEM OFF:", req.body);
-    return res.status(200).json({ ok: true });
-  });
-
-  app.post("/webhooks/petpooja/item-on", (req, res) => {
-    console.log("PetPooja ITEM ON:", req.body);
-    return res.status(200).json({ ok: true });
-  });
-
-  app.post("/webhooks/petpooja/store-update", (req, res) => {
-    console.log("PetPooja STORE UPDATE:", req.body);
-    return res.status(200).json({ ok: true });
-  });
-
-  app.post("/webhooks/petpooja/store-status", (req, res) => {
-    console.log("PetPooja STORE STATUS:", req.body);
-    return res.status(200).json({ ok: true, is_open: true });
-  });
-  app.post("/webhooks/petpooja/push-menu", (req, res) => {
-    console.log("PetPooja STORE STATUS:", req.body);
-    return res.status(200).json({ ok: true, is_open: true });
-  });
   app.use(notFound);
   app.use(errorHandler);
 };
