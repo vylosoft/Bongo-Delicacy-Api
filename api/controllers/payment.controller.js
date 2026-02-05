@@ -26,57 +26,73 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
    CREATE ORDER
 ------------------------------------------------------- */
 const createOrder = async (req, res) => {
+  console.log("[CREATE_ORDER] Incoming request");
+
   const { error, value } = saveOrderSchema(req.body);
   if (error) {
+    console.error("[CREATE_ORDER] Validation failed:", error);
     return res.status(400).json({ success: false });
   }
 
-  const { orderinfo, userId } = value; // ✅ only added userId
+  const { orderinfo, userId } = value;
   const orderDetails = orderinfo.OrderInfo.Order.details;
   const restaurantDetails = orderinfo.OrderInfo.Restaurant.details;
-  const orderItems = orderinfo.OrderInfo.OrderItem?.details || []; // ✅ only added orderItems
+  const orderItems = orderinfo.OrderInfo.OrderItem?.details || [];
 
   const clientorderID = generateOrderId();
   orderDetails.orderID = clientorderID;
   orderDetails.clientorderID = clientorderID;
 
-  // ✅ DESCRIPTION (only fix)
+  console.log("[CREATE_ORDER] Generated clientorderID:", clientorderID);
+
+  // DESCRIPTION
   try {
     if (userId) {
+      console.log("[CREATE_ORDER] Fetching user preferences:", userId);
+
       const prefs = await fetchUserPreferences(userId);
 
       const restaurantName =
         restaurantDetails.restName || restaurantDetails.name || "Restaurant";
 
+      console.log("[CREATE_ORDER] Generating AI description");
+
       const ai = await generateOrderDescription(
         prefs,
         orderItems,
-        restaurantName
+        restaurantName,
       );
 
-      // ✅ support both: string OR { description }
       orderDetails.description =
         typeof ai === "string" ? ai : ai?.description || "";
+
+      console.log("[CREATE_ORDER] AI description set");
     } else {
       orderDetails.description = "";
+      console.log("[CREATE_ORDER] No userId, description skipped");
     }
   } catch (err) {
-    console.error("AI description failed:", err);
+    console.error("[CREATE_ORDER] AI description failed:", err);
     orderDetails.description = "";
   }
 
-  // 1️⃣ PetPooja (unchanged)
+  // PetPooja
   try {
+    console.log("[CREATE_ORDER] Sending order to PetPooja");
     await placeOrderWithPetpuja(orderinfo);
-  } catch {
+    console.log("[CREATE_ORDER] PetPooja order placed");
+  } catch (err) {
+    console.error("[CREATE_ORDER] PetPooja order failed:", err);
     return res.status(502).json({
       success: false,
       message: "PetPooja order failed",
     });
   }
 
-  // 2️⃣ Razorpay (unchanged)
+  // Razorpay
   try {
+    console.log("[CREATE_ORDER] Creating Razorpay order");
+
     const razorpay = new Razorpay({
       key_id: env.RAZORPAY_KEY_ID,
       key_secret: env.RAZORPAY_KEY_SECRET,
@@ -88,17 +104,29 @@ const createOrder = async (req, res) => {
       receipt: `pp_${clientorderID}`,
     });
 
+    console.log("[CREATE_ORDER] Razorpay order created:", rpOrder.id);
+
     return res.json({
       success: true,
       clientorderID,
       razorpayOrder: rpOrder,
     });
-  } catch {
-    await cancelPetpujaOrder({
-      restID: restaurantDetails.restID,
-      clientorderID,
-      cancelReason: "Razorpay creation failed",
-    });
+  } catch (err) {
+    console.error("[CREATE_ORDER] Razorpay creation failed:", err);
+
+    try {
+      console.log("[CREATE_ORDER] Cancelling PetPooja order");
+      await cancelPetpujaOrder({
+        restID: restaurantDetails.restID,
+        clientorderID,
+        cancelReason: "Razorpay creation failed",
+      });
+    } catch (cancelErr) {
+      console.error(
+        "[CREATE_ORDER] Failed to cancel PetPooja order:",
+        cancelErr,
+      );
+    }
 
     return res.status(500).json({
       success: false,
@@ -107,11 +135,12 @@ const createOrder = async (req, res) => {
   }
 };
 
-
 /* -------------------------------------------------------
    VERIFY PAYMENT + CREATE DB ORDER
 ------------------------------------------------------- */
 const verifyPayment = async (req, res) => {
+  console.log("[VERIFY_PAYMENT] Incoming request");
+
   const {
     razorpay_payment_id,
     razorpay_order_id,
@@ -127,14 +156,25 @@ const verifyPayment = async (req, res) => {
     .digest("hex");
 
   if (expected !== razorpay_signature) {
-    await cancelPetpujaOrder({
-      restID: orderData.brandId,
-      clientorderID,
-      cancelReason: "Signature mismatch",
+    console.error("[VERIFY_PAYMENT] Signature mismatch", {
+      expected,
+      received: razorpay_signature,
     });
+
+    try {
+      await cancelPetpujaOrder({
+        restID: orderData.brandId,
+        clientorderID,
+        cancelReason: "Signature mismatch",
+      });
+    } catch (err) {
+      console.error("[VERIFY_PAYMENT] Failed to cancel PetPooja:", err);
+    }
 
     return res.status(400).json({ success: false });
   }
+
+  console.log("[VERIFY_PAYMENT] Signature verified");
 
   try {
     const {
@@ -147,7 +187,6 @@ const verifyPayment = async (req, res) => {
       loyaltyPointsToRedeem,
     } = orderData;
 
-    // SAME LOGIC AS apiCreateOrder
     const discountAmount = 0;
     const totalBeforeGst = Math.max(0, subtotal - loyaltyPointsToRedeem);
     const gstAmount = totalBeforeGst * 0.05;
@@ -173,15 +212,30 @@ const verifyPayment = async (req, res) => {
       created_at: new Date().toISOString(),
     };
 
-    await supabase.from("orders").insert(orderRow);
+    console.log("[VERIFY_PAYMENT] Inserting order into DB");
+
+    const { error } = await supabase.from("orders").insert(orderRow);
+
+    if (error) {
+      console.error("[VERIFY_PAYMENT] Supabase insert failed:", error);
+      throw error;
+    }
+
+    console.log("[VERIFY_PAYMENT] Order saved successfully");
 
     return res.json({ success: true });
   } catch (err) {
-    await cancelPetpujaOrder({
-      restID: orderData.brandId,
-      clientorderID,
-      cancelReason: "DB insert failed",
-    });
+    console.error("[VERIFY_PAYMENT] Order processing failed:", err);
+
+    try {
+      await cancelPetpujaOrder({
+        restID: orderData.brandId,
+        clientorderID,
+        cancelReason: "DB insert failed",
+      });
+    } catch (cancelErr) {
+      console.error("[VERIFY_PAYMENT] Failed to cancel PetPooja:", cancelErr);
+    }
 
     return res.status(500).json({ success: false });
   }
@@ -191,6 +245,8 @@ const verifyPayment = async (req, res) => {
    CANCEL ON PAYMENT FAILURE
 ------------------------------------------------------- */
 const cancelOrderOnPaymentfailed = async (req, res) => {
+  console.log("[CANCEL_ORDER] Incoming request", req.body);
+
   const { restID, clientorderID, cancelReason } = req.body;
 
   try {
@@ -200,8 +256,11 @@ const cancelOrderOnPaymentfailed = async (req, res) => {
       cancelReason,
     });
 
+    console.log("[CANCEL_ORDER] Order cancelled successfully");
+
     return res.json({ success: true });
-  } catch {
+  } catch (err) {
+    console.error("[CANCEL_ORDER] Cancellation failed:", err);
     return res.status(500).json({ success: false });
   }
 };

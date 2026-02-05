@@ -1,92 +1,191 @@
 const { createClient } = require("@supabase/supabase-js");
-const { getMealRecommendation, parseMenuFromText } = require("../services/gemini.service");
-const { getPersonalizedMealRecommendations } = require("../services/gemini.personalized");
-const { petpujaService } = require("../../utils/petpujaService");
+const {
+  getMealRecommendation,
+  parseMenuFromText,
+} = require("../services/gemini.service");
+const {
+  getPersonalizedMealRecommendations,
+} = require("../services/gemini.personalized");
 
-// Load Supabase from environment variables
-const SUPABASE_URL = 'https://nldgaczpzfmwamivniua.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZGdhY3pwemZtd2FtaXZuaXVhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjYyNzA5NSwiZXhwIjoyMDc4MjAzMDk1fQ.sLnOMjKs-WJu9IyAaLUzLCmKZl0-Ph32-ElUT2MbWYY';
+/* ================== SUPABASE SETUP ================== */
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const SUPABASE_URL = "https://nldgaczpzfmwamivniua.supabase.co";
+const SUPABASE_SERVICE_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZGdhY3pwemZtd2FtaXZuaXVhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjYyNzA5NSwiZXhwIjoyMDc4MjAzMDk1fQ.sLnOMjKs-WJu9IyAaLUzLCmKZl0-Ph32-ElUT2MbWYY";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+/* ================== HELPERS ================== */
+
+/**
+ * Fetch latest menu payload from Supabase cache
+ * Payload format is IDENTICAL to PetPooja response
+ */
+async function fetchMenuFromSupabase(identifier) {
+  console.log("Fetching menu for identifier:", identifier);
+
+  // Try menusharingcode first
+  let { data, error } = await supabase
+    .from("petpooja_menu_cache")
+    .select("payload")
+    .eq("rest_id", identifier)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  // Fallback: try restaurant_id
+  if (!data) {
+    ({ data, error } = await supabase
+      .from("petpooja_menu_cache")
+      .select("payload")
+      .eq("rest_id", identifier)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single());
+  }
+
+  if (error) {
+    console.error("Supabase error:", error);
+  }
+
+  if (!data?.payload) {
+    throw new Error("Menu not found in Supabase cache");
+  }
+
+  return data.payload;
+}
+
+
+/**
+ * Build AI-friendly flat menu
+ * Handles ₹0 items with variations correctly
+ */
+function buildFlatMenu(items = []) {
+  const flatMenu = [];
+
+  items.forEach((item) => {
+    const base = {
+      itemId: String(item.itemid),
+      name: item.itemname,
+      description: item.itemdescription || "",
+      categoryId: String(item.item_categoryid),
+      // type: ATTRIBUTE_MAP[item.item_attributeid] || "unknown",
+      image: item.item_image_url || "",
+      hasAddons: item.itemallowaddon === "1",
+      hasVariations: item.itemallowvariation === "1",
+    };
+
+    if (Array.isArray(item.variation) && item.variation.length > 0) {
+      item.variation.forEach((v) => {
+        flatMenu.push({
+          ...base,
+          variantId: String(v.id || v.variationid),
+          variantName: v.name,
+          price: Number(v.price),
+          fullName: `${item.itemname} - ${v.name}`,
+        });
+      });
+    } else {
+      flatMenu.push({
+        ...base,
+        price: Number(item.price),
+        fullName: item.itemname,
+      });
+    }
+  });
+
+  return flatMenu;
+}
+
+/**
+ * Display price for frontend menu
+ */
+function getDisplayPrice(item) {
+  if (item.price && Number(item.price) > 0) {
+    return Number(item.price);
+  }
+
+  if (Array.isArray(item.variation) && item.variation.length > 0) {
+    const prices = item.variation.map((v) => Number(v.price));
+    return `From ₹${Math.min(...prices)}`;
+  }
+
+  return null;
+}
+
+/* ================== ADMIN / GENERIC RECOMMENDATION ================== */
 
 const recommendDish = async (req, res) => {
   try {
     const { resturent_identifier, preferences = "" } = req.body;
 
     if (!resturent_identifier) {
-      return res.status(400).json({ error: "resturent_identifier is required" });
+      return res
+        .status(400)
+        .json({ error: "resturent_identifier is required" });
     }
 
-    const URI = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
-    const responseData = await petpujaService(URI, { restID: resturent_identifier });
+    const menuData = await fetchMenuFromSupabase(resturent_identifier);
 
-    console.log("PETPUJA RAW KEYS:", Object.keys(responseData));
-
-    // Stronger restaurant name extraction
     const brandName =
-      responseData?.restaurant_name ||
-      responseData?.rest_name ||
-      responseData?.restaurant ||
-      responseData?.brand ||
-      responseData?.outlet_name ||
-      responseData?.name ||
-      responseData?.store_name ||
+      menuData.restaurant_name ||
+      menuData.rest_name ||
+      menuData.name ||
+      menuData.restaurants?.[0]?.details?.restaurantname ||
       "Restaurant";
 
-    const items = responseData?.items || [];
-    const categories = responseData?.categories || [];
+    const items = menuData.items || [];
+    const categories = menuData.categories || [];
 
-    // Build category list
-    const menuByCategory = categories.map(cat => ({
+    const menuByCategory = categories.map((cat) => ({
       id: String(cat.categoryid),
       name: cat.categoryname,
       items: items
-        .filter(i => i.item_categoryid == cat.categoryid)
-        .map(i => ({
+        .filter((i) => i.item_categoryid == cat.categoryid)
+        .map((i) => ({
           id: String(i.itemid),
           name: i.itemname,
           description: i.itemdescription || "",
-          price: i.price || null,
-          image: i.item_image_url || ""
-        }))
+          price: getDisplayPrice(i),
+          image: i.item_image_url || "",
+          // type: ATTRIBUTE_MAP[i.item_attributeid] || "unknown",
+          hasAddons: i.itemallowaddon === "1",
+          hasVariations: i.itemallowvariation === "1",
+        })),
     }));
 
-    // Flat menu for AI
-    const flatMenu = items.map(i => ({
-      id: String(i.itemid),
-      name: i.itemname,
-      description: i.itemdescription || "",
-      price: i.price || null,
-      image: i.item_image_url || ""
-    }));
+    const flatMenu = buildFlatMenu(items);
 
-    console.log("MENU SENT TO GEMINI:", flatMenu.length);
-
-    const recommendation = await getMealRecommendation(preferences, flatMenu, brandName);
+    const recommendation = await getMealRecommendation(
+      preferences,
+      flatMenu,
+      brandName,
+    );
 
     return res.json({
+      success: true,
       brandName,
       menu: menuByCategory,
-      recommendation // STRING ONLY
+      recommendation,
     });
-
   } catch (err) {
     console.error("ADMIN MENU ERROR:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ error: err.message });
   }
 };
 
-
+/* ================== USER-SPECIFIC RECOMMENDATION ================== */
 
 const getUserRecommendations = async (req, res) => {
   try {
     const { userId, restaurantId } = req.body;
 
     if (!userId || !restaurantId) {
-      return res.status(400).json({ error: "userId and restaurantId are required" });
+      return res
+        .status(400)
+        .json({ error: "userId and restaurantId are required" });
     }
 
-    // 1) Fetch user taste profile
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("dietary_preferences")
@@ -101,51 +200,38 @@ const getUserRecommendations = async (req, res) => {
       likes: profile.dietary_preferences?.likes || "",
       dislikes: profile.dietary_preferences?.dislikes || "",
       allergies: profile.dietary_preferences?.allergies || "",
-      feedback: ""
+      feedback: "",
     };
 
-    // 2) Collect feedback from orders table
-    const { data: orderFeedback, error: orderError } = await supabase
+    const { data: orderFeedback } = await supabase
       .from("orders")
       .select("feedback")
       .eq("user_id", userId)
       .not("feedback", "is", null);
 
-    if (!orderError && Array.isArray(orderFeedback)) {
+    if (Array.isArray(orderFeedback)) {
       userPreferences.feedback = orderFeedback
-        .map(f => f.feedback)
+        .map((o) => o.feedback)
         .filter(Boolean)
         .join(" | ");
     }
 
-    // 3) Fetch menu
-    const uri = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
-    const menuData = await petpujaService(uri, { restID: restaurantId });
-
-    if (!menuData || !menuData.items) {
-      return res.status(500).json({ error: "Unable to fetch restaurant menu" });
-    }
+    const menuData = await fetchMenuFromSupabase(restaurantId);
 
     const brandName =
       menuData.restaurant_name ||
       menuData.rest_name ||
       menuData.name ||
+      menuData.restaurants?.[0]?.details?.restaurantname ||
       "Restaurant";
 
-    const flatMenu = menuData.items.map(i => ({
-      id: i.itemid,
-      name: i.itemname,
-      description: i.itemdescription || "",
-      price: i.price || null,
-      image: i.item_image_url || ""
-    }));
+    const flatMenu = buildFlatMenu(menuData.items || []);
 
-    // 4) Ask Gemini WITHOUT MESSAGE
     const aiRecommendation = await getPersonalizedMealRecommendations(
       userPreferences,
-      "",        // NO MESSAGE SENT
+      "",
       flatMenu,
-      brandName
+      brandName,
     );
 
     return res.json({
@@ -154,17 +240,15 @@ const getUserRecommendations = async (req, res) => {
       restaurantId,
       brandName,
       preferences: userPreferences,
-      recommendation: aiRecommendation
+      recommendation: aiRecommendation,
     });
-
   } catch (err) {
     console.error("USER RECOMMENDATION ERROR:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ error: err.message });
   }
 };
 
-
-
+/* ================== MENU PARSER ================== */
 
 const parseMenu = async (req, res) => {
   try {
@@ -176,8 +260,10 @@ const parseMenu = async (req, res) => {
   }
 };
 
+/* ================== EXPORT ================== */
+
 module.exports = {
   recommendDish,
+  getUserRecommendations,
   parseMenu,
-  getUserRecommendations
 };
