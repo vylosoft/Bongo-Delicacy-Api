@@ -141,7 +141,43 @@ export const pushMenuWebhook = async (req, res) => {
         reason: "menu unchanged",
       });
     }
+    let supabase_resturent_id = null;
+    const { data, error: restFetchErr } = await supabase
+      .from("restaurants")
+      .select("id")
+      .eq("petpuja_resturant_id", restaurant.restaurantid)
+      .single();
 
+    if (!data) {
+      const resturentPayload = {
+        name: restaurant?.details?.restaurantname || "",
+        petpuja_resturant_id: restaurant.restaurantid
+      };
+      const resturentData = await supabase
+        .from("restaurants")
+        .insert(resturentPayload)
+        .select("id")
+        .single();
+      console.log("db data1", resturentData);
+      supabase_resturent_id = resturentData.data.id;
+    } else {
+      console.log("db data2", data);
+      supabase_resturent_id = data.id;
+    }
+    
+    const outletPayload = {
+      resturent_id: supabase_resturent_id,
+      lat: details.latitude,
+      long: details.longitude,
+      is_active: restaurant.active === "1" ? true : false,
+      petpooja_outlet_id:details.menusharingcode,
+      contact: details.contact,
+      address: details.address,
+      city: details.city,
+      state: details.state
+    }
+    
+    await supabase.from("outlet").upsert(outletPayload, { onConflict: "petpooja_outlet_id" }).select("id").single();
     const { error: upsertError } = await supabase
       .from("petpooja_menu_cache")
       .upsert(
