@@ -3,7 +3,8 @@ const {
   fetchResturentByMappingIdSchema,
   addResturentSchema,
   addResturentTableSchema,
-  updateResturent
+  updateResturent,
+  imageUploadSchema
 } = require("../validations/resturent.validation");
 const { petpujaService } = require("../../utils/petpujaService");
 const supabase = require("../../config/db");
@@ -64,6 +65,7 @@ const getDetails = async (req, res) => {
       .select("*")
       .eq("id", uuid)
       .single();
+
     if (!data) return res.error({ message: "No data found.", status: 404 });
     if (dbError) {
       return res.error({
@@ -71,7 +73,6 @@ const getDetails = async (req, res) => {
         status: 500
       });
     }
-    console.log("HIII=>", data);
     
     return res.success({ data: data });
   } catch (error) {
@@ -85,23 +86,23 @@ const getDetails = async (req, res) => {
 
 const uploadRestaurantImage = async (req, res) => {
   try {
-    const rest_id = req.body.rest_id;
-    const type = req.body.type; // logo | hero | about
-
-    if (!rest_id) return res.status(400).json({ error: "rest_id is required" });
-    if (!type) return res.status(400).json({ error: "type is required" });
-    if (!req.file) return res.status(400).json({ error: "file is required" });
-
-    const allowed = ["logo", "hero", "about"];
-    if (!allowed.includes(type)) {
-      return res.status(400).json({ error: "Invalid type" });
+    const payload = {
+      ...req.body
     }
 
+    const {value, error: validationError } = imageUploadSchema(payload);
+    const { id, type } = value;
+    if (validationError) {
+          return res.error({
+            message: validationError.details.map((e) => e.message).join(", "),
+            status: 400
+          });
+        }
     const ext = (req.file.originalname.split(".").pop() || "jpg").toLowerCase();
-    const filePath = `restaurants/${rest_id}/${type}-${Date.now()}.${ext}`;
+    const filePath = `restaurants/${id}/${type}-${Date.now()}.${ext}`;
 
     // IMPORTANT: use a real bucket name
-    const BUCKET = "restaurant-images";
+    const BUCKET = process.env.RESTURENT_BUCKET_NAME;
 
     const { error: upErr } = await supabase.storage.from(BUCKET).upload(filePath, req.file.buffer, {
       contentType: req.file.mimetype,
@@ -110,14 +111,22 @@ const uploadRestaurantImage = async (req, res) => {
 
     if (upErr) return res.status(400).json({ error: upErr.message });
 
+    const updatePayload = {};
+    if (value.type === "logo") updatePayload.logo = filePath;
+    if (value.type === "hero") updatePayload.hero_image = filePath;
+    if (value.type === "about") updatePayload.about_image = filePath;
+
+    const { data: dbData, error:dbError } = await supabase
+      .from("restaurants")
+      .update(updatePayload)
+      .eq("id", value.id)
+      .select()
+      .single();
+
     // public url (works only if bucket is public)
     const { data } = supabase.storage.from(BUCKET).getPublicUrl(filePath);
-
-    return res.status(200).json({
-      message: "Uploaded",
-      url: data.publicUrl,
-      path: filePath
-    });
+    const publicUrl = process.env.SUPABASE_URL+ "/storage/v1/object/public/" + BUCKET + filePath;
+    return res.success({ data:  data.publicUrl,  message: "Image uploded successfully", path: publicUrl });
   } catch (err) {
     console.error("uploadRestaurantImage:", err);
     return res.status(500).json({ error: "Internal server error" });

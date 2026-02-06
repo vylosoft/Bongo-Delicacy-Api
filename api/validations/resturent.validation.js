@@ -60,10 +60,29 @@ const updateResturent = (body) =>{
   }
 }
 
+const imageUploadSchema = (body) =>{
+  try {
+    const schema = Joi.object({
+      id: Joi.string().required().messages({
+        "any.required": "Restaurant id is required",
+        "string.empty": "Restaurant id is required"
+      }),
+      type: Joi.string().required().valid("logo", "hero", "about")
+      .messages({
+        "any.required": "type is required",
+        "string.empty": "type is required"
+      })
+    });
+    return schema.validate(body, { abortEarly: false });
+  } catch (error) {
+    throw new Error(error);
+  }
+}
 module.exports = {
     fetchResturentByMappingIdSchema,
     addResturentSchema,
     addResturentTableSchema,
     getAllSchema,
-    updateResturent
+    updateResturent,
+    imageUploadSchema
 };
