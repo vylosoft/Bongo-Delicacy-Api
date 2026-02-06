@@ -43,9 +43,27 @@ const getAllSchema = (body) => {
   }
 };
 
+const updateResturent = (body) =>{
+   try {
+    const schema = Joi.object({
+      id: Joi.string().required(),
+      tagline: Joi.string().allow(null, ''),
+      description: Joi.string().allow(null, ''),
+      about_text: Joi.string().allow(null, ''),
+      theme_primary: Joi.string().allow(null, ''),
+      theme_accent: Joi.string().allow(null, ''),
+      theme_text_on_primary: Joi.string().allow(null, '')
+    });
+    return schema.validate(body, { abortEarly: false, stripUnknown: true });
+  } catch (error) {
+    throw new Error(error);
+  }
+}
+
 module.exports = {
     fetchResturentByMappingIdSchema,
     addResturentSchema,
     addResturentTableSchema,
-    getAllSchema
+    getAllSchema,
+    updateResturent
 };

@@ -1,11 +1,13 @@
-const Joi = require('joi');
-const { fetchResturentByMappingIdSchema, addResturentSchema, addResturentTableSchema } = require('../validations/resturent.validation');
-const { petpujaService } = require('../../utils/petpujaService');
-const { createClient } = require('@supabase/supabase-js');
-const supabase = require("../../config/db");
-const SUPABASE_URL = 'https://nldgaczpzfmwamivniua.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZGdhY3pwemZtd2FtaXZuaXVhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjYyNzA5NSwiZXhwIjoyMDc4MjAzMDk1fQ.sLnOMjKs-WJu9IyAaLUzLCmKZl0-Ph32-ElUT2MbWYY';
 const multer = require("multer");
+const {
+  fetchResturentByMappingIdSchema,
+  addResturentSchema,
+  addResturentTableSchema,
+  updateResturent
+} = require("../validations/resturent.validation");
+const { petpujaService } = require("../../utils/petpujaService");
+const supabase = require("../../config/db");
+
 const upload = multer({ storage: multer.memoryStorage() });
 const { getAllSchema } = require("../validations/resturent.validation");
 // const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -37,15 +39,15 @@ const getAll = async (req, res) => {
       count
     } = await supabase.from("restaurants").select("*", { count: "exact" }).range(from, to);
     if (dbError) {
-      console.log(dbError)
+      console.log(dbError);
       return res.error({
         message: "Error occured during fetching the data",
         status: 500
       });
     }
-    return res.success({ data: { result: data, count }});
+    return res.success({ data: { result: data, count } });
   } catch (error) {
-    console.log(error)
+    console.log(error);
     return res.error({
       message: "Internal server error",
       status: 500
@@ -53,30 +55,33 @@ const getAll = async (req, res) => {
   }
 };
 
-const getDetails = async(req,res) =>{
+const getDetails = async (req, res) => {
   try {
     const uuid = req.params.uuid;
 
-    const {
-      data,
-      error: dbError,
-    } = await supabase.from("restaurants").select("*").eq("id", uuid).single();
+    const { data, error: dbError } = await supabase
+      .from("restaurants")
+      .select("*")
+      .eq("id", uuid)
+      .single();
+    if (!data) return res.error({ message: "No data found.", status: 404 });
     if (dbError) {
-      console.log(dbError)
       return res.error({
         message: "Error occured during fetching the data",
         status: 500
       });
     }
+    console.log("HIII=>", data);
+    
     return res.success({ data: data });
   } catch (error) {
-    console.log(error)
+    console.log(error);
     return res.error({
       message: "Internal server error",
       status: 500
     });
   }
-}
+};
 
 const uploadRestaurantImage = async (req, res) => {
   try {
@@ -98,12 +103,10 @@ const uploadRestaurantImage = async (req, res) => {
     // IMPORTANT: use a real bucket name
     const BUCKET = "restaurant-images";
 
-    const { error: upErr } = await supabase.storage
-      .from(BUCKET)
-      .upload(filePath, req.file.buffer, {
-        contentType: req.file.mimetype,
-        upsert: true,
-      });
+    const { error: upErr } = await supabase.storage.from(BUCKET).upload(filePath, req.file.buffer, {
+      contentType: req.file.mimetype,
+      upsert: true
+    });
 
     if (upErr) return res.status(400).json({ error: upErr.message });
 
@@ -113,21 +116,22 @@ const uploadRestaurantImage = async (req, res) => {
     return res.status(200).json({
       message: "Uploaded",
       url: data.publicUrl,
-      path: filePath,
+      path: filePath
     });
   } catch (err) {
     console.error("uploadRestaurantImage:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 };
+
 const fetchResturentByMappingId = async (req, res) => {
   try {
     const reqBody = { ...req.query };
     const validateSchema = fetchResturentByMappingIdSchema(reqBody);
     if (validateSchema.error) {
       return res.error({
-        message: validateSchema.error.details.map(e => e.message).join(', '),
-        status: 400,
+        message: validateSchema.error.details.map((e) => e.message).join(", "),
+        status: 400
       });
     }
 
@@ -138,10 +142,9 @@ const fetchResturentByMappingId = async (req, res) => {
 
     return res.success({ data: responseData.restaurants });
   } catch (err) {
-    return res.error({ message: 'Internal server error' });
+    return res.error({ message: "Internal server error" });
   }
 };
-
 
 const addResturent = async (req, res) => {
   try {
@@ -161,7 +164,7 @@ const addResturent = async (req, res) => {
       theme_accent,
       theme_text_on_primary,
       Latitude,
-      Longitude,
+      Longitude
     } = req.body;
 
     const petpujaUrl = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
@@ -184,7 +187,7 @@ const addResturent = async (req, res) => {
       theme_accent,
       theme_text_on_primary,
       Latitude,
-      Longitude,
+      Longitude
     };
 
     const { data, error: dbError } = await supabase
@@ -197,7 +200,7 @@ const addResturent = async (req, res) => {
 
     return res.status(201).json({
       message: "Restaurant created successfully",
-      restaurant: data,
+      restaurant: data
     });
   } catch (err) {
     console.error("addResturent:", err);
@@ -205,6 +208,47 @@ const addResturent = async (req, res) => {
   }
 };
 
+const update = async (req, res) => {
+  try {
+    const requestPayload = {
+      ...req.body,
+      ...req.params
+    }
+    // validation rules
+    const { value, error: validationError } = updateResturent(requestPayload);
+    // Return validation error.
+    if (validationError) {
+      return res.error({
+        message: validationError.details.map((e) => e.message).join(", "),
+        status: 400
+      });
+    }
+    const payload = value;
+    // update the data
+    const { data, error: dbError} = await supabase
+      .from("restaurants")
+      .update(payload)
+      .eq("id", value.id)
+      .select();
+
+    if (dbError) {
+      console.log("err", dbError)
+      return res.error({
+        message: "Update failed.",
+        status: 400
+      });
+    }
+
+    return res.success({ data: data });
+
+  } catch (error) {
+    console.log(error);
+    return res.error({
+      message: "Internal server error",
+      status: 500
+    });
+  }
+};
 
 const addResturentTable = async (req, res) => {
   try {
@@ -239,7 +283,7 @@ const addResturentTable = async (req, res) => {
       table_number: finalTableNumber,
       capacity,
       table_name,
-      is_active: true,
+      is_active: true
     };
 
     const { data, error: dbError } = await supabase
@@ -251,9 +295,8 @@ const addResturentTable = async (req, res) => {
 
     return res.status(201).json({
       message: "Table added successfully",
-      table: data[0],
+      table: data[0]
     });
-
   } catch (err) {
     console.error("addResturentTable:", err);
     return res.status(500).json({ error: "Internal server error" });
@@ -294,9 +337,8 @@ const toggleTableStatus = async (req, res) => {
 
     return res.status(200).json({
       message: "Table status updated",
-      table: data,
+      table: data
     });
-
   } catch (err) {
     return res.status(500).json({ error: "Internal server error" });
   }
@@ -310,5 +352,6 @@ module.exports = {
   toggleTableStatus,
   uploadRestaurantImage,
   getAll,
-  getDetails
+  getDetails,
+  update
 };

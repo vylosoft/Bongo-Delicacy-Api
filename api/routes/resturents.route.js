@@ -22,7 +22,7 @@ router.get("/:rest_id/tables", resturentController.getTablesByRestaurant);
 router.get("/restaurant-by-mappingId", resturentController.fetchResturentByMappingId);
 
 // Add restaurant (DB insert only)
-router.post("/add", resturentController.addResturent);
+router.put("/:id", resturentController.update);
 
 // Upload image to Supabase storage and return URL
 router.post("/upload-image", upload.single("file"), resturentController.uploadRestaurantImage);
