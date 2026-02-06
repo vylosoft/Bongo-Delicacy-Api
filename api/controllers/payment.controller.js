@@ -176,69 +176,73 @@ const verifyPayment = async (req, res) => {
 
   console.log("[VERIFY_PAYMENT] Signature verified");
 
-  try {
-    const {
-      brandId,
-      userId,
-      items,
-      customer,
-      deliveryAddress,
-      subtotal,
-      loyaltyPointsToRedeem,
-    } = orderData;
+try {
+  const {
+    brandId,
+    userId,
+    items,
+    customer,
+    deliveryAddress,
+    pricing,
+  } = orderData;
 
-    const discountAmount = 0;
-    const totalBeforeGst = Math.max(0, subtotal - loyaltyPointsToRedeem);
-    const gstAmount = totalBeforeGst * 0.05;
-    const finalTotal = totalBeforeGst + gstAmount;
-    const pointsEarned = Math.floor(finalTotal / 100);
+  // 🔐 Optional but recommended safety check
+  // if (pricing.total_amount * 100 !== Number(req.body.razorpay_amount)) {
+  //   throw new Error("Amount mismatch detected");
+  // }
 
-    const orderRow = {
-      id: clientorderID,
-      brand_id: brandId,
-      user_id: userId,
-      items,
-      customer,
-      delivery_address: deliveryAddress,
-      subtotal,
-      discount_amount: discountAmount,
-      loyalty_discount: loyaltyPointsToRedeem,
-      gst_amount: gstAmount,
-      total_amount: finalTotal,
-      points_earned: pointsEarned,
-      status: "received",
-      external_order_id: razorpay_order_id,
-      refund_id: razorpay_payment_id,
-      created_at: new Date().toISOString(),
-    };
+  const pointsEarned = Math.floor(pricing.total_amount / 100);
 
-    console.log("[VERIFY_PAYMENT] Inserting order into DB");
+  const orderRow = {
+    id: clientorderID,
+    brand_id: brandId,
+    user_id: userId,
+    items,
+    customer,
+    delivery_address: deliveryAddress,
 
-    const { error } = await supabase.from("orders").insert(orderRow);
+    subtotal: pricing.subtotal,
+    discount_amount: pricing.flat_discount,
+    loyalty_discount: pricing.loyalty_discount,
+    gst_amount: pricing.gst_amount,
+    delivery_charge: pricing.delivery_charge,
+    total_amount: pricing.total_amount,
 
-    if (error) {
-      console.error("[VERIFY_PAYMENT] Supabase insert failed:", error);
-      throw error;
-    }
+    points_earned: pointsEarned,
+    status: "received",
+    external_order_id: razorpay_order_id,
+    refund_id: razorpay_payment_id,
+    created_at: new Date().toISOString(),
+  };
 
-    console.log("[VERIFY_PAYMENT] Order saved successfully");
+  console.log("[VERIFY_PAYMENT] Inserting order into DB");
 
-    return res.json({ success: true });
-  } catch (err) {
-    console.error("[VERIFY_PAYMENT] Order processing failed:", err);
+  const { error } = await supabase.from("orders").insert(orderRow);
 
-    try {
-      await cancelPetpujaOrder({
-        restID: orderData.brandId,
-        clientorderID,
-        cancelReason: "DB insert failed",
-      });
-    } catch (cancelErr) {
-      console.error("[VERIFY_PAYMENT] Failed to cancel PetPooja:", cancelErr);
-    }
-
-    return res.status(500).json({ success: false });
+  if (error) {
+    console.error("[VERIFY_PAYMENT] Supabase insert failed:", error);
+    throw error;
   }
+
+  console.log("[VERIFY_PAYMENT] Order saved successfully");
+
+  return res.json({ success: true });
+} catch (err) {
+  console.error("[VERIFY_PAYMENT] Order processing failed:", err);
+
+  try {
+    await cancelPetpujaOrder({
+      restID: orderData.brandId,
+      clientorderID,
+      cancelReason: "DB insert failed",
+    });
+  } catch (cancelErr) {
+    console.error("[VERIFY_PAYMENT] Failed to cancel PetPooja:", cancelErr);
+  }
+
+  return res.status(500).json({ success: false });
+}
+
 };
 
 /* -------------------------------------------------------

@@ -65,9 +65,11 @@ const cancelOrder = async (req, res) => {
     /* ---------------------------------------------------
        3️⃣ REFUND SAFETY CHECK
     --------------------------------------------------- */
-    const totalAmount = Number(order.total_amount || 0);
+    const capturedAmountPaise = Math.round(
+      Number(order.total_amount) * 100
+    );
 
-    if (refundAmount > totalAmount) {
+    if (refundAmount > capturedAmountPaise) {
       return res.status(400).json({
         success: false,
         message: "Refund amount cannot exceed order total",
@@ -126,7 +128,7 @@ const cancelOrder = async (req, res) => {
       .update({
         status: "CANCELLED",
         refund_status: razorpayRefundId ? "completed" : null,
-       
+
       })
       .eq("id", clientorderID)
       .select()
