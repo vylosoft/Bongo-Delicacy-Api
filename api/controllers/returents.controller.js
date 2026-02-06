@@ -287,7 +287,7 @@ const addResturentTable = async (req, res) => {
       .eq("outlet_id", value.outlet_id)
       .eq("table_number", value.table_number)
       .single();
-    if (data)
+    if (existing)
       return res.error({
         message: "This table already exist in this outlet. please put different table number.",
         status: 400
