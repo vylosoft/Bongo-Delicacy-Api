@@ -50,7 +50,7 @@ const getDetails = async(req,res) =>{
     const { data, error: dbError } = await supabase
       .from("outlet")
       .select(
-        `*,restaurants (*)`
+        `id, resturent_id,restaurants (*)`
       )
       .eq("id", uuid)
       .single();

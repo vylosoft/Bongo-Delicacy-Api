@@ -151,7 +151,7 @@ const fetchResturentByMappingId = async (req, res) => {
 
     return res.success({ data: responseData.restaurants });
   } catch (err) {
-    return res.error({ message: "Internal server error" });
+    return res.error({ message: "Internal server error", status: 500 });
   }
 };
 
@@ -261,14 +261,17 @@ const update = async (req, res) => {
 
 const addResturentTable = async (req, res) => {
   try {
-    const rest_id = req.params.rest_id;
-    if (!rest_id) return res.status(400).json({ error: "rest_id is required" });
+    const payload = {
+      ...req.body
+    }
+    const { value, error: validationError } = tableBookingSchema(payload);
 
-    const { value, error } = addResturentTableSchema(req.body);
-    if (error) return res.status(400).json({ error: error.details[0].message });
-
-    const requestedNumber = Number(value.table_number);
-    const capacity = Number(value.capacity);
+    if (validationError){
+      return res.error({
+        message: validationError.details.map((e) => e.message).join(", "),
+        status: 400
+      });
+    }
 
     // Fetch existing highest table number for this restaurant
     const { data: existing } = await supabase
@@ -287,13 +290,13 @@ const addResturentTable = async (req, res) => {
 
     const table_name = `Table ${finalTableNumber}`;
 
-    const payload = {
-      rest_id,
-      table_number: finalTableNumber,
-      capacity,
-      table_name,
-      is_active: true
-    };
+    // const payload = {
+    //   rest_id,
+    //   table_number: finalTableNumber,
+    //   capacity,
+    //   table_name,
+    //   is_active: true
+    // };
 
     const { data, error: dbError } = await supabase
       .from("restaurant_tables")
@@ -355,7 +358,6 @@ const toggleTableStatus = async (req, res) => {
 
 module.exports = {
   fetchResturentByMappingId,
-  addResturent,
   addResturentTable,
   getTablesByRestaurant,
   toggleTableStatus,

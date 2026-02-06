@@ -24,11 +24,16 @@ const addResturentSchema = body =>
     theme_accent: Joi.string().allow(''),
     theme_text_on_primary: Joi.string().allow('')
   }).validate(body, { abortEarly: false, stripUnknown: true });
-  const addResturentTableSchema = body =>
+
+const addResturentTableSchema = body =>
   Joi.object({
-      table_name: Joi.string().optional(),
-    table_number: Joi.number().integer().min(1).required(),
-    capacity: Joi.number().integer().min(1).required()
+    outlet_id: Joi.string().required(),
+    table_number: Joi.string().allow("", null),
+    capacity: Joi.number().integer().min(1).required(),
+    booking_date: Joi.date().required(),
+    booking_time: Joi.string(),
+    customer_name: Joi.string().required(),
+    customer_contact: Joi.string().required()
   }).validate(body, { abortEarly: false, stripUnknown: true });
 
 const getAllSchema = (body) => {
@@ -78,11 +83,31 @@ const imageUploadSchema = (body) =>{
     throw new Error(error);
   }
 }
+
+const tableBookingSchema = (body) =>{
+  try {
+    const schema = Joi.object({
+      id: Joi.string().required().messages({
+        "any.required": "Restaurant id is required",
+        "string.empty": "Restaurant id is required"
+      }),
+      type: Joi.string().required().valid("logo", "hero", "about")
+      .messages({
+        "any.required": "type is required",
+        "string.empty": "type is required"
+      })
+    });
+    return schema.validate(body, { abortEarly: false });
+  } catch (error) {
+    throw new Error(error);
+  }
+}
 module.exports = {
     fetchResturentByMappingIdSchema,
     addResturentSchema,
     addResturentTableSchema,
     getAllSchema,
     updateResturent,
-    imageUploadSchema
+    imageUploadSchema,
+    tableBookingSchema
 };
