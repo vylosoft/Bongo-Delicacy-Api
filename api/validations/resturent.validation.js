@@ -30,30 +30,6 @@ const addResturentTableSchema = (body) =>
     outlet_id: Joi.string().required(),
     table_number: Joi.string().allow("", null),
     capacity: Joi.number().integer().min(1).required(),
-    booking_date: Joi.string()
-      .pattern(/^\d{4}-\d{2}-\d{2}$/)
-      .required()
-      .custom((value, helpers) => {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const bookingDate = new Date(value + "T00:00:00");
-
-        if (bookingDate < today) {
-          return helpers.error("date.min");
-        }
-
-        return value;
-      })
-      .messages({
-        "string.pattern.base": "Booking date must be in YYYY-MM-DD format",
-        "date.min": "booking date cannot be in the past",
-      }),
-    booking_time: Joi.string().messages({
-      "string.pattern.base": "booking_time must be in HH:mm or HH:mm:ss format"
-    }),
-    customer_name: Joi.string().required(),
-    customer_contact: Joi.string().required()
   }).validate(body, { abortEarly: false, stripUnknown: true });
 
 const getAllSchema = (body) => {

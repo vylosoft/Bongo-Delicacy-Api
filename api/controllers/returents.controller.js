@@ -278,19 +278,20 @@ const addResturentTable = async (req, res) => {
     }
     const dbPayload = {
       ...value,
-      is_booked: true
+      is_booked: false
     }
     // Fetch existing highest table number for this restaurant
-    // const { data: existing } = await supabase
-    //   .from("restaurant_tables")
-    //   .select("table_number")
-    //   .eq("outlet_id", value.outlet_id)
-    //   .eq("booking_date", value.booking_date)
-    //   .eq("booking_time", value.booking_time)
-    //   .eq("table_number", value.table_number)
-    //   .order("table_number", { ascending: false })
-    //   .limit(1);
-    
+    const { data: existing } = await supabase
+      .from("restaurant_tables")
+      .select("table_number")
+      .eq("outlet_id", value.outlet_id)
+      .eq("table_number", value.table_number)
+      .single();
+    if (data)
+      return res.error({
+        message: "This table already exist in this outlet. please put different table number.",
+        status: 400
+      });
     const { data, error: dbError } = await supabase
       .from("outlet_tables")
       .insert(dbPayload)
