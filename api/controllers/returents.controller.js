@@ -4,7 +4,7 @@ const {
   addResturentSchema,
   addResturentTableSchema,
   updateResturent,
-  imageUploadSchema
+  imageUploadSchema,
 } = require("../validations/resturent.validation");
 const { petpujaService } = require("../../utils/petpujaService");
 const supabase = require("../../config/db");
@@ -102,14 +102,17 @@ const uploadRestaurantImage = async (req, res) => {
     const filePath = `restaurants/${id}/${type}-${Date.now()}.${ext}`;
 
     // IMPORTANT: use a real bucket name
-    const BUCKET = process.env.RESTURENT_BUCKET_NAME;
+    const BUCKET = process.env.RESTAURANT_BUCKET_NAME;
 
     const { error: upErr } = await supabase.storage.from(BUCKET).upload(filePath, req.file.buffer, {
       contentType: req.file.mimetype,
       upsert: true
     });
 
-    if (upErr) return res.status(400).json({ error: upErr.message });
+    if (upErr){
+      console.log(upErr)
+      return res.status(400).json({ error: upErr.message });
+    } 
 
     const updatePayload = {};
     if (value.type === "logo") updatePayload.logo = filePath;
@@ -238,7 +241,8 @@ const update = async (req, res) => {
       .from("restaurants")
       .update(payload)
       .eq("id", value.id)
-      .select();
+      .select()
+      .single();
 
     if (dbError) {
       console.log("err", dbError)
@@ -264,7 +268,7 @@ const addResturentTable = async (req, res) => {
     const payload = {
       ...req.body
     }
-    const { value, error: validationError } = tableBookingSchema(payload);
+    const { value, error: validationError } = addResturentTableSchema(payload);
 
     if (validationError){
       return res.error({
@@ -272,42 +276,36 @@ const addResturentTable = async (req, res) => {
         status: 400
       });
     }
-
-    // Fetch existing highest table number for this restaurant
-    const { data: existing } = await supabase
-      .from("restaurant_tables")
-      .select("table_number")
-      .eq("rest_id", rest_id)
-      .order("table_number", { ascending: false })
-      .limit(1);
-
-    let finalTableNumber = requestedNumber;
-
-    // If requested number exists or lower, increment
-    if (existing && existing.length > 0 && existing[0].table_number >= requestedNumber) {
-      finalTableNumber = existing[0].table_number + 1;
+    const dbPayload = {
+      ...value,
+      is_booked: true
     }
-
-    const table_name = `Table ${finalTableNumber}`;
-
-    // const payload = {
-    //   rest_id,
-    //   table_number: finalTableNumber,
-    //   capacity,
-    //   table_name,
-    //   is_active: true
-    // };
-
+    // Fetch existing highest table number for this restaurant
+    // const { data: existing } = await supabase
+    //   .from("restaurant_tables")
+    //   .select("table_number")
+    //   .eq("outlet_id", value.outlet_id)
+    //   .eq("booking_date", value.booking_date)
+    //   .eq("booking_time", value.booking_time)
+    //   .eq("table_number", value.table_number)
+    //   .order("table_number", { ascending: false })
+    //   .limit(1);
+    
     const { data, error: dbError } = await supabase
-      .from("restaurant_tables")
-      .insert([payload])
+      .from("outlet_tables")
+      .insert(dbPayload)
       .select();
 
-    if (dbError) return res.status(400).json({ error: dbError.message });
+    if (dbError) {
+      return res.error({
+        message: dbError.message,
+        status: 400
+      });
+    } 
 
     return res.status(201).json({
-      message: "Table added successfully",
-      table: data[0]
+      message: "Table booked successfully",
+      table: data
     });
   } catch (err) {
     console.error("addResturentTable:", err);

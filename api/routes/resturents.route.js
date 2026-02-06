@@ -28,7 +28,7 @@ router.put("/:id", resturentController.update);
 router.post("/upload-image", upload.single("file"), resturentController.uploadRestaurantImage);
 
 // Add table
-router.post("/:rest_id/addTable", resturentController.addResturentTable);
+router.post("/addTable", resturentController.addResturentTable);
 
 // Toggle table active/inactive
 router.patch("/table/:table_id/toggleStatus", resturentController.toggleTableStatus);
