@@ -8,12 +8,8 @@ const {
 } = require("../validations/resturent.validation");
 const { petpujaService } = require("../../utils/petpujaService");
 const supabase = require("../../config/db");
-
-const upload = multer({ storage: multer.memoryStorage() });
 const { getAllSchema } = require("../validations/resturent.validation");
-// const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-const DEFAULT_IMAGE = "https://via.placeholder.com/400x300?text=No+Image";
+const { RESTAURANT_BUCKET_NAME } = require("../../config/env.js");
 
 const getAll = async (req, res) => {
   try {
@@ -102,16 +98,19 @@ const uploadRestaurantImage = async (req, res) => {
     const filePath = `restaurants/${id}/${type}-${Date.now()}.${ext}`;
 
     // IMPORTANT: use a real bucket name
-    const BUCKET = process.env.RESTAURANT_BUCKET_NAME;
+    const BUCKET = RESTAURANT_BUCKET_NAME;
 
     const { error: upErr } = await supabase.storage.from(BUCKET).upload(filePath, req.file.buffer, {
       contentType: req.file.mimetype,
       upsert: true
     });
 
-    if (upErr){
-      console.log(upErr)
-      return res.status(400).json({ error: upErr.message });
+    if (upErr) {
+      console.log(upErr);
+      return res.error({
+        message: upErr.message,
+        status: 400
+      });
     } 
 
     const updatePayload = {};
@@ -263,103 +262,10 @@ const update = async (req, res) => {
   }
 };
 
-const addResturentTable = async (req, res) => {
-  try {
-    const payload = {
-      ...req.body
-    }
-    const { value, error: validationError } = addResturentTableSchema(payload);
 
-    if (validationError){
-      return res.error({
-        message: validationError.details.map((e) => e.message).join(", "),
-        status: 400
-      });
-    }
-    const dbPayload = {
-      ...value,
-      is_booked: false
-    }
-    // Fetch existing highest table number for this restaurant
-    const { data: existing } = await supabase
-      .from("restaurant_tables")
-      .select("table_number")
-      .eq("outlet_id", value.outlet_id)
-      .eq("table_number", value.table_number)
-      .single();
-    if (existing)
-      return res.error({
-        message: "This table already exist in this outlet. please put different table number.",
-        status: 400
-      });
-    const { data, error: dbError } = await supabase
-      .from("outlet_tables")
-      .insert(dbPayload)
-      .select();
-
-    if (dbError) {
-      return res.error({
-        message: dbError.message,
-        status: 400
-      });
-    } 
-
-    return res.status(201).json({
-      message: "Table booked successfully",
-      table: data
-    });
-  } catch (err) {
-    console.error("addResturentTable:", err);
-    return res.status(500).json({ error: "Internal server error" });
-  }
-};
-
-const getTablesByRestaurant = async (req, res) => {
-  try {
-    const { rest_id } = req.params;
-    if (!rest_id) return res.status(400).json({ error: "rest_id is required" });
-
-    const { data, error } = await supabase
-      .from("restaurant_tables")
-      .select("*")
-      .eq("rest_id", rest_id)
-      .order("table_number", { ascending: true });
-
-    if (error) return res.status(400).json({ error: error.message });
-
-    return res.status(200).json({ tables: data });
-  } catch (err) {
-    return res.status(500).json({ error: "Internal server error" });
-  }
-};
-const toggleTableStatus = async (req, res) => {
-  try {
-    const { table_id } = req.params;
-    const { is_active } = req.body;
-
-    const { data, error } = await supabase
-      .from("restaurant_tables")
-      .update({ is_active })
-      .eq("id", table_id)
-      .select()
-      .single();
-
-    if (error) return res.status(400).json({ error: error.message });
-
-    return res.status(200).json({
-      message: "Table status updated",
-      table: data
-    });
-  } catch (err) {
-    return res.status(500).json({ error: "Internal server error" });
-  }
-};
 
 module.exports = {
   fetchResturentByMappingId,
-  addResturentTable,
-  getTablesByRestaurant,
-  toggleTableStatus,
   uploadRestaurantImage,
   getAll,
   getDetails,

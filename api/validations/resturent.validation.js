@@ -25,12 +25,7 @@ const addResturentSchema = body =>
     theme_text_on_primary: Joi.string().allow('')
   }).validate(body, { abortEarly: false, stripUnknown: true });
 
-const addResturentTableSchema = (body) =>
-  Joi.object({
-    outlet_id: Joi.string().required(),
-    table_number: Joi.string().allow("", null),
-    capacity: Joi.number().integer().min(1).required(),
-  }).validate(body, { abortEarly: false, stripUnknown: true });
+
 
 const getAllSchema = (body) => {
   try {
@@ -84,7 +79,6 @@ const imageUploadSchema = (body) =>{
 module.exports = {
     fetchResturentByMappingIdSchema,
     addResturentSchema,
-    addResturentTableSchema,
     getAllSchema,
     updateResturent,
     imageUploadSchema
