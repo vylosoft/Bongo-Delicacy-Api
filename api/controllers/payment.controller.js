@@ -21,6 +21,63 @@ const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZGdhY3pwemZtd2FtaXZuaXVhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjYyNzA5NSwiZXhwIjoyMDc4MjAzMDk1fQ.sLnOMjKs-WJu9IyAaLUzLCmKZl0-Ph32-ElUT2MbWYY";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const normalizeOrderItem = (item) => {
+  const basePrice = Number(item.base_price ?? item.price ?? 0);
+  const gstAmount = Number(item.gst_total_amount ?? 0);
+
+  return {
+    id: item.itemid,
+    itemid: item.itemid,
+    name: item.itemname,
+    itemname: item.itemname,
+
+    price: basePrice.toFixed(2),
+    base_price: basePrice,
+    price_with_gst: basePrice + gstAmount,
+
+    quantity: item.quantity ?? 1,
+
+    addon: [],
+    variation: [],
+
+    gst_type: item.gst_type ?? "services",
+    gst_total_percentage: item.gst_total_percentage ?? 0,
+    gst_total_amount: gstAmount,
+
+    tax_breakup: item.tax_breakup ?? [],
+    item_tax: item.item_tax ?? [],
+    tax_inclusive: Boolean(item.tax_inclusive),
+
+    active: item.active ?? "1",
+    in_stock: item.in_stock ?? "1",
+    is_combo: item.is_combo ?? "0",
+
+    itemdescription: item.itemdescription ?? "",
+    item_categoryid: item.item_categoryid ?? "",
+    itemrank: item.itemrank ?? "1",
+
+    item_image_url: item.item_image_url ?? "",
+    image: item.image ?? item.item_image_url ?? "",
+
+    item_info: item.item_info ?? { spice_level: "not-applicable" },
+
+    cuisine: item.cuisine ?? [],
+    item_tags: item.item_tags ?? [],
+
+    itemallowaddon: item.itemallowaddon ?? "0",
+    itemallowvariation: item.itemallowvariation ?? "0",
+    itemaddonbasedon: item.itemaddonbasedon ?? "0",
+
+    item_favorite: item.item_favorite ?? "0",
+    ignore_taxes: item.ignore_taxes ?? "0",
+    ignore_discounts: item.ignore_discounts ?? "0",
+
+    item_ordertype: item.item_ordertype ?? "1,2,3",
+    item_packingcharges: item.item_packingcharges ?? "0",
+    variation_groupname: item.variation_groupname ?? "",
+    minimumpreparationtime: item.minimumpreparationtime ?? "",
+  };
+};
 
 /* -------------------------------------------------------
    CREATE ORDER
@@ -176,73 +233,67 @@ const verifyPayment = async (req, res) => {
 
   console.log("[VERIFY_PAYMENT] Signature verified");
 
-try {
-  const {
-    brandId,
-    userId,
-    items,
-    customer,
-    deliveryAddress,
-    pricing,
-  } = orderData;
-
-  // 🔐 Optional but recommended safety check
-  // if (pricing.total_amount * 100 !== Number(req.body.razorpay_amount)) {
-  //   throw new Error("Amount mismatch detected");
-  // }
-
-  const pointsEarned = Math.floor(pricing.total_amount / 100);
-
-  const orderRow = {
-    id: clientorderID,
-    brand_id: brandId,
-    user_id: userId,
-    items,
-    customer,
-    delivery_address: deliveryAddress,
-
-    subtotal: pricing.subtotal,
-    discount_amount: pricing.flat_discount,
-    loyalty_discount: pricing.loyalty_discount,
-    gst_amount: pricing.gst_amount,
-    delivery_charge: pricing.delivery_charge,
-    total_amount: pricing.total_amount,
-
-    points_earned: pointsEarned,
-    status: "received",
-    external_order_id: razorpay_order_id,
-    refund_id: razorpay_payment_id,
-    created_at: new Date().toISOString(),
-  };
-
-  console.log("[VERIFY_PAYMENT] Inserting order into DB");
-
-  const { error } = await supabase.from("orders").insert(orderRow);
-
-  if (error) {
-    console.error("[VERIFY_PAYMENT] Supabase insert failed:", error);
-    throw error;
-  }
-
-  console.log("[VERIFY_PAYMENT] Order saved successfully");
-
-  return res.json({ success: true });
-} catch (err) {
-  console.error("[VERIFY_PAYMENT] Order processing failed:", err);
-
   try {
-    await cancelPetpujaOrder({
-      restID: orderData.brandId,
-      clientorderID,
-      cancelReason: "DB insert failed",
-    });
-  } catch (cancelErr) {
-    console.error("[VERIFY_PAYMENT] Failed to cancel PetPooja:", cancelErr);
+    const { brandId, userId, items, customer, deliveryAddress, pricing } =
+      orderData;
+const normalizedItems = items.map(normalizeOrderItem);
+    // 🔐 Optional but recommended safety check
+    // if (pricing.total_amount * 100 !== Number(req.body.razorpay_amount)) {
+    //   throw new Error("Amount mismatch detected");
+    // }
+
+    const pointsEarned = Math.floor(pricing.total_amount / 100);
+
+    const orderRow = {
+      id: clientorderID,
+      brand_id: brandId,
+      user_id: userId,
+
+      items: normalizedItems,
+      customer,
+      delivery_address: deliveryAddress,
+
+      subtotal: pricing.subtotal,
+      discount_amount: pricing.flat_discount,
+      loyalty_discount: pricing.loyalty_discount,
+      gst_amount: pricing.gst_amount,
+      delivery_charge: pricing.delivery_charge,
+      total_amount: pricing.total_amount,
+
+      points_earned: pointsEarned,
+      status: "received",
+      external_order_id: razorpay_order_id,
+      refund_id: razorpay_payment_id,
+      created_at: new Date().toISOString(),
+    };
+
+    console.log("[VERIFY_PAYMENT] Inserting order into DB");
+
+    const { error } = await supabase.from("orders").insert(orderRow);
+
+    if (error) {
+      console.error("[VERIFY_PAYMENT] Supabase insert failed:", error);
+      throw error;
+    }
+
+    console.log("[VERIFY_PAYMENT] Order saved successfully");
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("[VERIFY_PAYMENT] Order processing failed:", err);
+
+    try {
+      await cancelPetpujaOrder({
+        restID: orderData.brandId,
+        clientorderID,
+        cancelReason: "DB insert failed",
+      });
+    } catch (cancelErr) {
+      console.error("[VERIFY_PAYMENT] Failed to cancel PetPooja:", cancelErr);
+    }
+
+    return res.status(500).json({ success: false });
   }
-
-  return res.status(500).json({ success: false });
-}
-
 };
 
 /* -------------------------------------------------------

@@ -12,29 +12,37 @@ const getDistanceKm = (lat1, lon1, lat2, lon2) => {
 
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) ** 2;
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
 
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
 exports.resolveRestaurant = async (req, res) => {
   try {
-    const { restaurant_name, lat, lng } = req.body;
+    const { restaurant_id, lat, lng } = req.body;
 
-    if (!restaurant_name || lat == null || lng == null) {
+    // 1️⃣ Validate input
+    if (!restaurant_id || lat == null || lng == null) {
       return res.status(400).json({
         success: false,
-        message: "restaurant_name, lat and lng are required",
+        message: "restaurant_id, lat and lng are required",
       });
     }
 
-    // 1️⃣ Fetch all outlets for this restaurant name
+    // 2️⃣ Fetch outlets for the restaurant
     const { data: outlets, error } = await supabase
-      .from("petpooja_menu_cache")
-      .select("rest_id, restaurant_name, latitude, longitude, isclosed")
-      .eq("restaurant_name", restaurant_name);
+      .from("outlet")
+      .select(
+        `
+        id,
+        resturent_id,
+        lat,
+        long,
+        is_active,
+        petpooja_outlet_id
+      `,
+      )
+      .eq("resturent_id", restaurant_id);
 
     if (error) throw error;
 
@@ -45,38 +53,31 @@ exports.resolveRestaurant = async (req, res) => {
       });
     }
 
-    // 2️⃣ Keep only OPEN outlets with valid coordinates
-    const openOutlets = outlets.filter(
-      (o) =>
-        o.isclosed === false &&
-        o.latitude != null &&
-        o.longitude != null
+    // 3️⃣ Filter active outlets with valid coordinates
+    const activeOutlets = outlets.filter(
+      (o) => o.is_active === true && o.lat != null && o.long != null,
     );
 
-    if (openOutlets.length === 0) {
+    if (activeOutlets.length === 0) {
       return res.json({
         success: false,
-        message: "All outlets are currently closed",
+        message: "All outlets are currently inactive",
       });
     }
 
-    // 3️⃣ Calculate distance & sort
-    const nearest = openOutlets
+    // 4️⃣ Find nearest outlet
+    const nearest = activeOutlets
       .map((o) => ({
         ...o,
-        distance: getDistanceKm(
-          lat,
-          lng,
-          o.latitude,
-          o.longitude
-        ),
+        distance: getDistanceKm(lat, lng, o.lat, o.long),
       }))
       .sort((a, b) => a.distance - b.distance)[0];
 
-    // 4️⃣ Return nearest outlet
+    // 5️⃣ Return outlet IDs + distance
     return res.json({
       success: true,
-      rest_id: nearest.rest_id,
+      resturent_id: nearest.resturent_id, // internal outlet UUID
+      petpooja_outlet_id: nearest.petpooja_outlet_id, // PetPooja outlet ID
       distance_km: Number(nearest.distance.toFixed(2)),
     });
   } catch (err) {

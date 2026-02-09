@@ -42,10 +42,10 @@ async function handlePetPoojaStoreWebhook(req, res) {
     };
 
     const { data, error } = await supabase
-      .from("petpooja_menu_cache")
+      .from("outlet")
       .update(updates)
-      .eq("rest_id", restID)
-      .select("id, rest_id, isclosed, turn_on_time");
+      .eq("petpooja_outlet_id", restID)
+      .select("id, petpooja_outlet_id, is_active, open_hour");
 
     if (error) {
       console.error("Supabase update error:", error);

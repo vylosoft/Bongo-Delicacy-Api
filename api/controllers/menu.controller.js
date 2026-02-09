@@ -11,6 +11,73 @@ const crypto = require("crypto");
 /**
  * Hash payload (used if we do fallback-to-live and want to cache it)
  */
+/**
+ * Build a map: addon_group_id -> full addon group details
+ */
+const buildAddonGroupMap = (addonGroups) => {
+  if (!Array.isArray(addonGroups)) return new Map();
+
+  return new Map(
+    addonGroups.map((group) => [
+      String(group.addongroupid), // ✅ FIXED
+      {
+        addon_group_id: String(group.addongroupid),
+        addon_group_name: String(group.addongroup_name || ""),
+        addon_group_rank: String(group.addongroup_rank || "0"),
+        active: String(group.active || "1"),
+        items: (group.addongroupitems || []).map((addonItem) => ({
+          id: String(addonItem.addonitemid), // ✅ FIXED
+          name: String(addonItem.addonitem_name || ""),
+          price: Number(addonItem.addonitem_price || 0),
+          rank: String(addonItem.addonitem_rank || "0"),
+          active: String(addonItem.active || "1"),
+          attributes: addonItem.attributes || "",
+        })),
+      },
+    ]),
+  );
+};
+
+
+/**
+ * Expand item.addon references into full addon group details
+ * @param {Object} item - Menu item with addon references
+ * @param {Map} addonGroupMap - Map of addon_group_id -> addon group details
+ * @returns {Array} - Expanded addon groups with items
+ */
+const expandItemAddons = (item, addonGroupMap) => {
+  if (!Array.isArray(item.addon) || item.addon.length === 0) {
+    return [];
+  }
+
+  const expanded = [];
+
+  for (const addonRef of item.addon) {
+    const groupId = String(addonRef.addon_group_id || "");
+    const fullGroup = addonGroupMap.get(groupId);
+
+    if (!fullGroup) continue;
+
+    const activeItems = fullGroup.items.filter((i) => String(i.active) === "1");
+
+    expanded.push({
+      addon_group_id: fullGroup.addon_group_id,
+      addon_group_name: fullGroup.addon_group_name,
+      addon_group_rank: fullGroup.addon_group_rank,
+      selection_min: Number(
+        addonRef.addon_item_selection_min ?? addonRef.min_qty ?? 0,
+      ),
+      selection_max: Number(
+        addonRef.addon_item_selection_max ?? addonRef.max_qty ?? 1,
+      ),
+      active: fullGroup.active,
+      items: activeItems,
+    });
+  }
+
+  return expanded;
+};
+
 const hashPayload = (payload) => {
   const raw = JSON.stringify(payload);
   return crypto.createHash("sha256").update(raw).digest("hex");
@@ -182,11 +249,16 @@ exports.fetchMenuByCatagory = async (req, res) => {
     }
 
     // Build tax lookup: taxid -> tax object
-    const taxMap = new Map((responseData.taxes || []).map((t) => [String(t.taxid), t]));
+    const taxMap = new Map(
+      (responseData.taxes || []).map((t) => [String(t.taxid), t]),
+    );
+
+    // ✅ Build addon group lookup
+    const addonGroupMap = buildAddonGroupMap(responseData.addongroups || []);
 
     // Filter items by category (but do NOT remove out-of-stock items)
     const itemsByCategory = (responseData.items || []).filter(
-      (item) => String(item.item_categoryid) === String(category_id)
+      (item) => String(item.item_categoryid) === String(category_id),
     );
 
     // stock overrides
@@ -222,7 +294,7 @@ exports.fetchMenuByCatagory = async (req, res) => {
 
       const gst_total_percentage = tax_breakup.reduce(
         (sum, t) => sum + Number(t.tax_percentage || 0),
-        0
+        0,
       );
 
       const gst_total_amount = +tax_breakup
@@ -235,6 +307,12 @@ exports.fetchMenuByCatagory = async (req, res) => {
         ? +basePrice.toFixed(2)
         : +(basePrice + gst_total_amount).toFixed(2);
 
+      // ✅ Expand addon references
+      const expandedAddons = expandItemAddons(
+        itemWithAvailability,
+        addonGroupMap,
+      );
+
       return {
         ...itemWithAvailability,
         base_price: +basePrice.toFixed(2),
@@ -242,6 +320,7 @@ exports.fetchMenuByCatagory = async (req, res) => {
         gst_total_percentage: +gst_total_percentage.toFixed(2),
         gst_total_amount,
         price_with_gst,
+        addons: expandedAddons, // ✅ NEW: Full addon details
       };
     });
 
@@ -275,17 +354,32 @@ exports.fetchAdminMenuWithCategory = async (req, res) => {
     const categories = responseData?.categories || [];
     const items = responseData?.items || [];
 
+    // ✅ Build addon group lookup
+    const addonGroupMap = buildAddonGroupMap(responseData.addongroups || []);
+
     // stock overrides
     const stockMap = await getStockMap(resturent_identifier);
 
-    // attach availability for all items
-    const itemsWithAvailability = items.map((item) => applyAvailability(item, stockMap));
+    // attach availability for all items AND expand addons
+    const itemsWithAvailability = items.map((item) => {
+      const itemWithAvail = applyAvailability(item, stockMap);
+
+      // ✅ Expand addon references
+      const expandedAddons = expandItemAddons(itemWithAvail, addonGroupMap);
+
+      return {
+        ...itemWithAvail,
+        addons: expandedAddons, // ✅ NEW: Full addon details
+      };
+    });
 
     const data = categories.map((cat) => ({
       id: cat.categoryid,
       name: cat.categoryname,
       active: cat.active,
-      menus: itemsWithAvailability.filter((menu) => menu.item_categoryid == cat.categoryid),
+      menus: itemsWithAvailability.filter(
+        (menu) => menu.item_categoryid == cat.categoryid,
+      ),
     }));
 
     return res.success({ data });
