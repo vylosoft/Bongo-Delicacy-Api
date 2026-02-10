@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import fetch from "node-fetch";
 import Joi from "joi";
-import { supabase } from "../../../utils/supabaseClient.js";
+import supabase from "../../../config/db.js";
 
 /* -------------------- VALIDATION -------------------- */
 

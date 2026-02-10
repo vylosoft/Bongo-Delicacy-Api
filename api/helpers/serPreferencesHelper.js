@@ -1,9 +1,4 @@
-const { createClient } = require("@supabase/supabase-js");
-
-const supabase = createClient(
-  "https://nldgaczpzfmwamivniua.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZGdhY3pwemZtd2FtaXZuaXVhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjYyNzA5NSwiZXhwIjoyMDc4MjAzMDk1fQ.sLnOMjKs-WJu9IyAaLUzLCmKZl0-Ph32-ElUT2MbWYY",
-);
+const supabase = require("../../config/db");
 
 /* ================== USER PREFERENCES ================== */
 
@@ -30,10 +25,13 @@ const fetchUserPreferences = async (userId) => {
 
     return {
       likes: Array.isArray(dp.likes) ? dp.likes.join(", ") : dp.likes || "",
-      dislikes: Array.isArray(dp.dislikes) ? dp.dislikes.join(", ") : dp.dislikes || "",
-      allergies: Array.isArray(dp.allergies) ? dp.allergies.join(", ") : dp.allergies || "",
+      dislikes: Array.isArray(dp.dislikes)
+        ? dp.dislikes.join(", ")
+        : dp.dislikes || "",
+      allergies: Array.isArray(dp.allergies)
+        ? dp.allergies.join(", ")
+        : dp.allergies || "",
     };
-
   } catch (err) {
     console.error("[USER_PREFS] Error:", err);
     return {
@@ -43,7 +41,6 @@ const fetchUserPreferences = async (userId) => {
     };
   }
 };
-
 
 /* ================== HELPER FUNCTIONS ================== */
 
@@ -61,10 +58,10 @@ function normalizeItemName(item) {
  */
 function extractComplaintData(complaint) {
   if (!complaint) return { text: "", itemNames: [] };
-  
+
   try {
     let parsed = complaint;
-    
+
     if (typeof complaint === "string") {
       try {
         parsed = JSON.parse(complaint);
@@ -72,7 +69,7 @@ function extractComplaintData(complaint) {
         return { text: complaint.trim(), itemNames: [] };
       }
     }
-    
+
     if (typeof parsed === "object" && parsed !== null) {
       const textFields = [
         parsed.comments,
@@ -84,7 +81,7 @@ function extractComplaintData(complaint) {
         parsed.feedback,
         parsed.text,
       ];
-      
+
       let text = "";
       for (const field of textFields) {
         if (field && typeof field === "string" && field.trim()) {
@@ -92,26 +89,25 @@ function extractComplaintData(complaint) {
           break;
         }
       }
-      
+
       let itemNames = [];
       if (Array.isArray(parsed.itemNames)) {
         itemNames = parsed.itemNames
-          .filter(name => name && typeof name === "string")
-          .map(name => name.toLowerCase().trim());
+          .filter((name) => name && typeof name === "string")
+          .map((name) => name.toLowerCase().trim());
       } else if (Array.isArray(parsed.items)) {
         itemNames = parsed.items
-          .filter(name => name && typeof name === "string")
-          .map(name => name.toLowerCase().trim());
+          .filter((name) => name && typeof name === "string")
+          .map((name) => name.toLowerCase().trim());
       }
-      
-      return { 
-        text: text || JSON.stringify(parsed), 
-        itemNames 
+
+      return {
+        text: text || JSON.stringify(parsed),
+        itemNames,
       };
     }
-    
+
     return { text: String(complaint).trim(), itemNames: [] };
-    
   } catch (error) {
     console.error("[COMPLAINT] Extraction failed:", error);
     return { text: String(complaint || "").trim(), itemNames: [] };
@@ -120,17 +116,13 @@ function extractComplaintData(complaint) {
 
 /* ================== FEEDBACK FETCHING ================== */
 
-const fetchRelevantOrderFeedback = async (
-  supabase,
-  userId,
-  currentItems
-) => {
+const fetchRelevantOrderFeedback = async (supabase, userId, currentItems) => {
   const currentItemIds = new Set(
-    currentItems.map(normalizeItemId).filter(Boolean)
+    currentItems.map(normalizeItemId).filter(Boolean),
   );
-  
+
   const currentItemNames = new Set(
-    currentItems.map(normalizeItemName).filter(Boolean)
+    currentItems.map(normalizeItemName).filter(Boolean),
   );
 
   if (currentItemIds.size === 0 && currentItemNames.size === 0) {
@@ -140,7 +132,7 @@ const fetchRelevantOrderFeedback = async (
 
   console.log("[FETCH] Looking for items:", {
     ids: Array.from(currentItemIds),
-    names: Array.from(currentItemNames)
+    names: Array.from(currentItemNames),
   });
 
   const { data: orders, error } = await supabase
@@ -160,85 +152,84 @@ const fetchRelevantOrderFeedback = async (
 
   const itemFeedbackMap = new Map();
 
-for (const order of orders) {
-  let pastItems = [];
+  for (const order of orders) {
+    let pastItems = [];
 
-  try {
-    if (Array.isArray(order.items)) {
-      // Already an array
-      pastItems = order.items;
-    } else if (typeof order.items === "string") {
-      // JSON string
-      pastItems = JSON.parse(order.items);
-    } else if (typeof order.items === "object" && order.items !== null) {
-      // JSONB object (Supabase)
-      pastItems = order.items;
-    } else {
-      pastItems = [];
-    }
-  } catch (parseError) {
-    console.error("[FETCH] Failed to normalize items:", {
-      items: order.items,
-      error: parseError,
-    });
-    continue;
-  }
-
-  let complaintItemNames = [];
-  if (order.complaint) {
-    const complaintData = extractComplaintData(order.complaint);
-    complaintItemNames = complaintData.itemNames;
-  }
-
-  for (const pastItem of pastItems) {
-    const pastItemId = normalizeItemId(pastItem);
-    const pastItemName = normalizeItemName(pastItem);
-
-    const matchesById = pastItemId && currentItemIds.has(pastItemId);
-    const matchesByName = pastItemName && currentItemNames.has(pastItemName);
-    const mentionedInComplaint = complaintItemNames.includes(pastItemName);
-
-    if (!matchesById && !matchesByName && !mentionedInComplaint) {
+    try {
+      if (Array.isArray(order.items)) {
+        // Already an array
+        pastItems = order.items;
+      } else if (typeof order.items === "string") {
+        // JSON string
+        pastItems = JSON.parse(order.items);
+      } else if (typeof order.items === "object" && order.items !== null) {
+        // JSONB object (Supabase)
+        pastItems = order.items;
+      } else {
+        pastItems = [];
+      }
+    } catch (parseError) {
+      console.error("[FETCH] Failed to normalize items:", {
+        items: order.items,
+        error: parseError,
+      });
       continue;
     }
 
-    const hasNegativeFeedback =
-      (order.rating != null && order.rating <= 3) ||
-      (order.feedback && order.feedback.trim().length > 0) ||
-      order.complaint;
-
-    if (!hasNegativeFeedback) {
-      continue;
+    let complaintItemNames = [];
+    if (order.complaint) {
+      const complaintData = extractComplaintData(order.complaint);
+      complaintItemNames = complaintData.itemNames;
     }
 
-    const key = pastItemId || pastItemName;
+    for (const pastItem of pastItems) {
+      const pastItemId = normalizeItemId(pastItem);
+      const pastItemName = normalizeItemName(pastItem);
 
-    if (!itemFeedbackMap.has(key)) {
-      itemFeedbackMap.set(key, []);
+      const matchesById = pastItemId && currentItemIds.has(pastItemId);
+      const matchesByName = pastItemName && currentItemNames.has(pastItemName);
+      const mentionedInComplaint = complaintItemNames.includes(pastItemName);
+
+      if (!matchesById && !matchesByName && !mentionedInComplaint) {
+        continue;
+      }
+
+      const hasNegativeFeedback =
+        (order.rating != null && order.rating <= 3) ||
+        (order.feedback && order.feedback.trim().length > 0) ||
+        order.complaint;
+
+      if (!hasNegativeFeedback) {
+        continue;
+      }
+
+      const key = pastItemId || pastItemName;
+
+      if (!itemFeedbackMap.has(key)) {
+        itemFeedbackMap.set(key, []);
+      }
+
+      itemFeedbackMap.get(key).push({
+        itemId: pastItemId,
+        itemName: pastItem.name || pastItem.itemname,
+        feedback: order.feedback || "",
+        complaint: order.complaint,
+        rating: order.rating,
+        orderDate: order.created_at,
+        matchedBy: matchesById
+          ? "id"
+          : matchesByName
+            ? "name"
+            : "complaint_mention",
+      });
+
+      console.log(
+        `[FETCH] Matched: ${pastItem.name || pastItem.itemname} (by ${
+          matchesById ? "id" : matchesByName ? "name" : "complaint_mention"
+        })`,
+      );
     }
-
-    itemFeedbackMap.get(key).push({
-      itemId: pastItemId,
-      itemName: pastItem.name || pastItem.itemname,
-      feedback: order.feedback || "",
-      complaint: order.complaint,
-      rating: order.rating,
-      orderDate: order.created_at,
-      matchedBy: matchesById
-        ? "id"
-        : matchesByName
-        ? "name"
-        : "complaint_mention",
-    });
-
-    console.log(
-      `[FETCH] Matched: ${pastItem.name || pastItem.itemname} (by ${
-        matchesById ? "id" : matchesByName ? "name" : "complaint_mention"
-      })`
-    );
   }
-}
-
 
   const result = [];
   for (const [key, feedbackList] of itemFeedbackMap.entries()) {
@@ -246,14 +237,14 @@ for (const order of orders) {
   }
 
   console.log(`[FETCH] Returning ${result.length} relevant feedback entries`);
-  
+
   return result;
 };
 
 /* ================== EXPORTS ================== */
 
-module.exports = { 
-  fetchUserPreferences, 
+module.exports = {
+  fetchUserPreferences,
   fetchRelevantOrderFeedback,
   extractComplaintData,
   supabase,

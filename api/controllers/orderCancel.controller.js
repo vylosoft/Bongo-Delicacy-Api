@@ -1,13 +1,9 @@
 const Razorpay = require("razorpay")
-const { createClient } = require("@supabase/supabase-js")
+
 const { cancelPetpujaOrder } = require("../helpers/petpujaHelper")
 const env = require("../../config/env.js")
 
-const supabase = createClient(
-  "https://nldgaczpzfmwamivniua.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZGdhY3pwemZtd2FtaXZuaXVhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjYyNzA5NSwiZXhwIjoyMDc4MjAzMDk1fQ.sLnOMjKs-WJu9IyAaLUzLCmKZl0-Ph32-ElUT2MbWYY"
-)
-
+const supabase = require("../../config/db");
 const cancelOrder = async (req, res) => {
   try {
     const clientorderID = req.body.clientorderID;

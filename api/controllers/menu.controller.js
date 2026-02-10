@@ -5,7 +5,7 @@ const {
   fetchAdminMenuWithCategorySchema,
 } = require("../validations/menu.validation");
 
-const { supabase } = require("../../utils/supabaseClient");
+const supabase = require("../../config/db");
 const crypto = require("crypto");
 
 /**

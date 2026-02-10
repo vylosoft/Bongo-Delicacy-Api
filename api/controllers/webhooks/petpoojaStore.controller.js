@@ -1,5 +1,5 @@
 // controllers/petpoojaStore.controller.js
-const { supabase } = require("../../../utils/supabaseClient");
+const supabase = require("../../../config/db");
 
 const DEFAULT_TZ_OFFSET = "+05:30";
 
