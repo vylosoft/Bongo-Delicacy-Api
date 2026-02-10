@@ -82,52 +82,58 @@ const createReservation = async (req, res) => {
 ========================================================= */
 const getAvailableTables = async (req, res) => {
   try {
-    const { rest_id } = req.params;
+    const { rest_id } = req.params; // this is outlet_id
     const { date, time, guests } = req.query;
 
     if (!rest_id || !date || !time) {
-      return res
-        .status(400)
-        .json({ error: "rest_id, date and time are required" });
+      return res.status(400).json({
+        error: "rest_id, date and time are required",
+      });
     }
 
-    /* ---------- 1. FETCH ALL VALID TABLES ---------- */
+    /* 1️⃣ Fetch active tables */
     const { data: tables, error: tableErr } = await supabase
-      .from("restaurant_tables")
-      .select("id, table_name, capacity")
-      .eq("rest_id", rest_id)
+      .from("outlet_tables")
+      .select("id, table_number, capacity")
+      .eq("outlet_id", rest_id)
       .eq("is_active", true)
       .gte("capacity", Number(guests || 1));
 
     if (tableErr) throw tableErr;
 
-    /* ---------- 2. FETCH BOOKED TABLES FOR SLOT ---------- */
+    /* 2️⃣ Fetch booked tables for this slot */
     const { data: reservations, error: resErr } = await supabase
       .from("reservations")
       .select("table_id")
-      .eq("brand_id", rest_id)
+      .eq("outlet_id", rest_id)
       .eq("date", date)
       .eq("time", time)
       .eq("status", "confirmed");
 
     if (resErr) throw resErr;
 
-    const bookedIds = new Set(reservations.map((r) => r.table_id));
+    const bookedTableIds = new Set(
+      reservations.map((r) => r.table_id)
+    );
 
-    /* ---------- 3. ATTACH STATUS ---------- */
-    const result = tables.map((t) => ({
-      id: t.id,
-      name: t.table_name,
-      capacity: t.capacity,
-      _status: bookedIds.has(t.id) ? "booked" : "available",
-    }));
+    /* 3️⃣ FILTER OUT booked tables */
+    const availableTables = tables
+      .filter((t) => !bookedTableIds.has(t.id))
+      .map((t) => ({
+        id: t.id,
+        name: t.table_number,
+        capacity: t.capacity,
+      }));
 
-    return res.json(result);
+    return res.json(availableTables);
   } catch (err) {
     console.error("getAvailableTables:", err);
-    return res.status(500).json({ error: "Failed to fetch tables" });
+    return res.status(500).json({
+      error: "Failed to fetch tables",
+    });
   }
 };
+
 
 module.exports = {
   createReservation,
