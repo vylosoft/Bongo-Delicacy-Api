@@ -119,17 +119,20 @@ const cancelOrder = async (req, res) => {
     } catch (err) {
       console.warn("PetPuja cancel failed:", err.message);
     }
-
+    const refundedAt = razorpayRefundId ? new Date().toISOString() : null;
     /* ---------------------------------------------------
        6️⃣ UPDATE ORDER (CLEAN + HONEST)
     --------------------------------------------------- */
     const { data: updatedOrder, error: updateError } = await supabase
       .from("orders")
+
       .update({
         status: "CANCELLED",
         refund_status: razorpayRefundId ? "completed" : null,
-
+        refund_amount: refundAmount,
+        refunded_at: refundedAt,
       })
+
       .eq("id", clientorderID)
       .select()
       .single();

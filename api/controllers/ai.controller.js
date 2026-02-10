@@ -197,12 +197,11 @@ const getUserRecommendations = async (req, res) => {
     }
 
     const userPreferences = {
-      likes: profile.dietary_preferences?.likes || "",
-      dislikes: profile.dietary_preferences?.dislikes || "",
-      allergies: profile.dietary_preferences?.allergies || "",
+      likes: (profile.dietary_preferences?.likes || []).join(", "),
+      dislikes: (profile.dietary_preferences?.dislikes || []).join(", "),
+      allergies: (profile.dietary_preferences?.allergies || []).join(", "),
       feedback: "",
     };
-
     const { data: orderFeedback } = await supabase
       .from("orders")
       .select("feedback")

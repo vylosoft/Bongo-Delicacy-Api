@@ -9,7 +9,7 @@ const {
 } = require("../helpers/petpujaHelper.js");
 
 const { generateOrderId } = require("../../utils/generateOrderId.js");
-const { fetchUserPreferences } = require("../helpers/serPreferencesHelper.js");
+const { fetchUserPreferences, fetchRelevantOrderFeedback } = require("../helpers/serPreferencesHelper.js");
 const {
   generateOrderDescription,
 } = require("../services/gemini.orderEnhancer.js");
@@ -92,6 +92,7 @@ const createOrder = async (req, res) => {
   }
 
   const { orderinfo, userId } = value;
+
   const orderDetails = orderinfo.OrderInfo.Order.details;
   const restaurantDetails = orderinfo.OrderInfo.Restaurant.details;
   const orderItems = orderinfo.OrderInfo.OrderItem?.details || [];
@@ -102,28 +103,44 @@ const createOrder = async (req, res) => {
 
   console.log("[CREATE_ORDER] Generated clientorderID:", clientorderID);
 
-  // DESCRIPTION
+  /* ================== DESCRIPTION ================== */
   try {
     if (userId) {
       console.log("[CREATE_ORDER] Fetching user preferences:", userId);
 
+      // 1️⃣ User preferences
       const prefs = await fetchUserPreferences(userId);
+console.log("[DEBUG PREFS]", prefs);
+      // 2️⃣ Past feedback (THIS WAS MISSING / WRONG EARLIER)
+      const pastItemFeedback = await fetchRelevantOrderFeedback(
+        supabase,
+        userId,
+        orderItems
+      );
 
-      const restaurantName =
-        restaurantDetails.restName || restaurantDetails.name || "Restaurant";
+      console.log(
+        "[CREATE_ORDER] Past feedback count:",
+        pastItemFeedback.length
+      );
 
+      // 3️⃣ Generate AI description (CORRECT ARGUMENTS)
       console.log("[CREATE_ORDER] Generating AI description");
 
-      const ai = await generateOrderDescription(
+      const aiResult = await generateOrderDescription(
         prefs,
         orderItems,
-        restaurantName,
+        pastItemFeedback
       );
 
       orderDetails.description =
-        typeof ai === "string" ? ai : ai?.description || "";
+        typeof aiResult === "string"
+          ? aiResult
+          : aiResult?.description || "";
 
-      console.log("[CREATE_ORDER] AI description set");
+      console.log(
+        "[CREATE_ORDER] AI description length:",
+        orderDetails.description.length
+      );
     } else {
       orderDetails.description = "";
       console.log("[CREATE_ORDER] No userId, description skipped");
@@ -133,7 +150,7 @@ const createOrder = async (req, res) => {
     orderDetails.description = "";
   }
 
-  // PetPooja
+  /* ================== PETPOOJA ================== */
   try {
     console.log("[CREATE_ORDER] Sending order to PetPooja");
     await placeOrderWithPetpuja(orderinfo);
@@ -146,7 +163,7 @@ const createOrder = async (req, res) => {
     });
   }
 
-  // Razorpay
+  /* ================== RAZORPAY ================== */
   try {
     console.log("[CREATE_ORDER] Creating Razorpay order");
 
@@ -181,7 +198,7 @@ const createOrder = async (req, res) => {
     } catch (cancelErr) {
       console.error(
         "[CREATE_ORDER] Failed to cancel PetPooja order:",
-        cancelErr,
+        cancelErr
       );
     }
 
@@ -236,7 +253,7 @@ const verifyPayment = async (req, res) => {
   try {
     const { brandId, userId, items, customer, deliveryAddress, pricing } =
       orderData;
-const normalizedItems = items.map(normalizeOrderItem);
+    const normalizedItems = items.map(normalizeOrderItem);
     // 🔐 Optional but recommended safety check
     // if (pricing.total_amount * 100 !== Number(req.body.razorpay_amount)) {
     //   throw new Error("Amount mismatch detected");
