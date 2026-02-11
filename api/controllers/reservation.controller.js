@@ -9,16 +9,15 @@ const getAvailableTables = async (req, res) => {
     const { rest_id } = req.params;
     const { date, time, guests } = req.query;
 
-    const outletId = rest_id; // 👈 normalize once
+    const outletId = rest_id;
 
     if (!outletId || !date || !time || !guests) {
       return res.status(400).json({
         error: "Missing required parameters",
-        received: { outletId, date, time, guests },
       });
     }
 
-    /* 1️⃣ Calculate time window */
+    /* 1️⃣ Calculate 2-hour window */
     const startTime = time;
 
     const addHours = (time, hours) => {
@@ -30,39 +29,30 @@ const getAvailableTables = async (req, res) => {
 
     const endTime = addHours(startTime, 2);
 
-    console.log("⏰ Time window:", { startTime, endTime });
-
-    /* 2️⃣ Fetch tables */
+    /* 2️⃣ Fetch active tables */
     const { data: tables, error: tableErr } = await supabase
       .from("outlet_tables")
       .select("id, table_number, capacity, is_active")
       .eq("outlet_id", outletId)
       .eq("is_active", true);
 
-    if (tableErr) {
-      console.error("❌ outlet_tables error:", tableErr);
-      throw tableErr;
-    }
+    if (tableErr) throw tableErr;
 
-    console.log("📦 Tables found:", tables?.length);
-
-    /* 3️⃣ Fetch conflicting reservations */
+    /* 3️⃣ Fetch overlapping reservations */
     const { data: conflicts, error: conflictErr } = await supabase
       .from("reservations")
-      .select("id, table_id, time, end_time")
+      .select("table_id")
       .eq("outlet_id", outletId)
       .eq("date", date)
+      .in("status", ["confirmed", "extended"])
       .lt("time", endTime)
       .gt("end_time", startTime);
 
-    if (conflictErr) {
-      console.error("❌ reservations conflict error:", conflictErr);
-      throw conflictErr;
-    }
+    if (conflictErr) throw conflictErr;
 
-    console.log("🚫 Conflicts found:", conflicts);
-
-    const bookedTableIds = new Set((conflicts || []).map((r) => r.table_id));
+    const bookedTableIds = new Set(
+      (conflicts || []).map((r) => r.table_id)
+    );
 
     /* 4️⃣ Build response */
     const result = tables.map((table) => {
@@ -77,14 +67,12 @@ const getAvailableTables = async (req, res) => {
       return { ...table, _status: "available" };
     });
 
-    console.log("✅ Final result:", result);
-
     return res.json(result);
+
   } catch (err) {
-    console.error("🔥 getAvailableTables CRASH:", err);
+    console.error("getAvailableTables:", err);
     return res.status(500).json({
       error: "Failed to fetch tables",
-      details: err?.message || err,
     });
   }
 };
@@ -101,15 +89,14 @@ const createReservation = async (req, res) => {
       });
     }
 
-    // ✅ Calculate end_time
     const [hour, minute] = time.split(":").map(Number);
     const end_time = `${String(hour + 2).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 
-    // ✅ Overlap check (no DB change needed)
+    // 🔥 Only same table conflict
     const { data: existing } = await supabase
       .from("reservations")
       .select("id")
-      .eq("brand_id", rest_id)
+      .eq("outlet_id", rest_id)
       .eq("table_id", tableId)
       .eq("date", date)
       .in("status", ["confirmed", "extended"])
@@ -117,25 +104,26 @@ const createReservation = async (req, res) => {
       .gt("end_time", time);
 
     if (existing && existing.length > 0) {
-      return res
-        .status(409)
-        .json({ error: "Table already booked for this slot" });
+      return res.status(409).json({
+        error: "This table is already booked for this time slot",
+      });
     }
 
     const booking_id = generateOrderId();
 
-    // ✅ Save end_time in reservation row (no schema change needed, column already added)
     const { data, error } = await supabase
       .from("reservations")
       .insert({
-        brand_id: rest_id,
+        brand_id: rest_id,       // ✅ ADD THIS
+        outlet_id: rest_id,
+
         user_id: user_id || null,
         name,
         phone,
         email,
         date,
         time,
-        end_time, // ✅ just save it here
+        end_time,
         guests,
         table_id: tableId,
         status: "confirmed",
@@ -156,6 +144,7 @@ const createReservation = async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 };
+
 
 // ✅ Admin confirm
 const adminConfirmReservation = async (req, res) => {

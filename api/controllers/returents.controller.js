@@ -98,7 +98,7 @@ const uploadRestaurantImage = async (req, res) => {
     const filePath = `restaurants/${id}/${type}-${Date.now()}.${ext}`;
 
     // IMPORTANT: use a real bucket name
-    const BUCKET = RESTAURANT_BUCKET_NAME;
+    const BUCKET = 'restaurant-images';
 
     const { error: upErr } = await supabase.storage.from(BUCKET).upload(filePath, req.file.buffer, {
       contentType: req.file.mimetype,
