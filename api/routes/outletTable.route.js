@@ -19,5 +19,6 @@ router.post("/", outletTableController.addOutletTable);
 
 // Toggle table active/inactive
 router.patch("/:table_id/toggle-status", outletTableController.toggleTableStatus);
-
+// delete table
+router.delete("/:table_id", outletTableController.deleteOutletTable);
 module.exports = router;

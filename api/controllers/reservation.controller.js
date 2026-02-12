@@ -89,6 +89,19 @@ const createReservation = async (req, res) => {
       });
     }
 
+    // ✅ Fetch table_number from the database
+    const { data: tableData, error: tableError } = await supabase
+      .from("outlet_tables")
+      .select("table_number")
+      .eq("id", tableId)
+      .single();
+
+    if (tableError || !tableData) {
+      return res.status(404).json({
+        error: "Table not found",
+      });
+    }
+
     const [hour, minute] = time.split(":").map(Number);
     const end_time = `${String(hour + 2).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 
@@ -114,9 +127,9 @@ const createReservation = async (req, res) => {
     const { data, error } = await supabase
       .from("reservations")
       .insert({
-        brand_id: rest_id,       // ✅ ADD THIS
+        brand_id: rest_id,
         outlet_id: rest_id,
-
+        table_number: tableData.table_number,  // ✅ Now defined
         user_id: user_id || null,
         name,
         phone,
@@ -144,7 +157,92 @@ const createReservation = async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 };
+const getAllReservations = async (req, res) => {
+  try {
+    const { rest_id } = req.params;
+    const { status, date, user_id, table_id } = req.query;
 
+    let query = supabase
+      .from("reservations")
+      .select("*")
+      .eq("outlet_id", rest_id)
+      .order("date", { ascending: false })
+      .order("time", { ascending: false });
+
+    // Optional filters
+    if (status) {
+      query = query.eq("status", status);
+    }
+    if (date) {
+      query = query.eq("date", date);
+    }
+    if (user_id) {
+      query = query.eq("user_id", user_id);
+    }
+    if (table_id) {
+      query = query.eq("table_id", table_id);
+    }
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    return res.json({
+      success: true,
+      count: data.length,
+      reservations: data,
+    });
+  } catch (err) {
+    console.error("getAllReservations:", err);
+    return res.status(500).json({ error: "Failed to fetch reservations" });
+  }
+};
+
+// ✅ Update reservation status
+const updateReservationStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    const validStatuses = ["pending", "confirmed", "extended", "cancelled", "completed", "no_show"];
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({
+        error: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
+      });
+    }
+
+    const updateData = { status };
+
+    // Add timestamp for cancelled status
+    if (status === "cancelled") {
+      updateData.cancelled_at = new Date().toISOString();
+      updateData.cancelled_by = req.body.cancelled_by || "admin";
+    }
+
+    const { data, error } = await supabase
+      .from("reservations")
+      .update(updateData)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    if (!data) {
+      return res.status(404).json({ error: "Reservation not found" });
+    }
+
+    return res.json({
+      success: true,
+      message: `Reservation status updated to ${status}`,
+      reservation: data,
+    });
+  } catch (err) {
+    console.error("updateReservationStatus:", err);
+    return res.status(500).json({ error: "Failed to update reservation status" });
+  }
+};
 
 // ✅ Admin confirm
 const adminConfirmReservation = async (req, res) => {
@@ -238,7 +336,10 @@ const extendReservation = async (req, res) => {
 module.exports = {
   createReservation,
   getAvailableTables,
+  getAllReservations,
+  updateReservationStatus,
   adminConfirmReservation,
   cancelReservation,
   extendReservation,
+
 };

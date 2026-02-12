@@ -1,6 +1,6 @@
 
 const supabase = require("../../config/db");
-const { getAllSchema, updateOutletTableSchema, addResturentTableSchema} = require("../validations/outletTable.validation.js");
+const { getAllSchema, updateOutletTableSchema, addResturentTableSchema } = require("../validations/outletTable.validation.js");
 
 
 const getAll = async (req, res) => {
@@ -64,7 +64,7 @@ const getDetails = async (req, res) => {
         status: 500
       });
     }
-    
+
     return res.success({ data: data });
   } catch (error) {
     console.log(error);
@@ -92,7 +92,7 @@ const update = async (req, res) => {
     }
     const payload = value;
     // update the data
-    const { data, error: dbError} = await supabase
+    const { data, error: dbError } = await supabase
       .from("outlet_tables")
       .update(payload)
       .eq("id", value.id)
@@ -125,7 +125,7 @@ const addOutletTable = async (req, res) => {
     }
     const { value, error: validationError } = addResturentTableSchema(payload);
 
-    if (validationError){
+    if (validationError) {
       return res.error({
         message: validationError.details.map((e) => e.message).join(", "),
         status: 400
@@ -158,7 +158,7 @@ const addOutletTable = async (req, res) => {
         message: dbError.message,
         status: 400
       });
-    } 
+    }
 
     return res.status(201).json({
       message: "Table created successfully",
@@ -173,7 +173,7 @@ const addOutletTable = async (req, res) => {
 const getTablesByOutlet = async (req, res) => {
   try {
     const { outlet_id } = req.params;
-    if (!outlet_id){
+    if (!outlet_id) {
       return res.error({
         message: "Outlet id is required",
         status: 400
@@ -187,16 +187,16 @@ const getTablesByOutlet = async (req, res) => {
       .order("table_number", { ascending: true });
 
     if (error) return res.error({
-        message: "DB error occured during fetching the data",
-        status: 400
-      });
+      message: "DB error occured during fetching the data",
+      status: 400
+    });
 
     return res.success({ data });
   } catch (err) {
     return res.error({
-        message: "Internal server error",
-        status: 500
-      });
+      message: "Internal server error",
+      status: 500
+    });
   }
 };
 
@@ -204,7 +204,7 @@ const toggleTableStatus = async (req, res) => {
   try {
     const { table_id } = req.params;
     const { is_active } = req.body;
-    
+
     const { data, error } = await supabase
       .from("outlet_tables")
       .update({ is_active })
@@ -213,9 +213,9 @@ const toggleTableStatus = async (req, res) => {
       .single();
 
     if (error) return res.error({
-        message: "DB error occured!",
-        status: 400
-      });
+      message: "DB error occured!",
+      status: 400
+    });
 
     return res.status(200).json({
       message: "Table status updated",
@@ -225,6 +225,64 @@ const toggleTableStatus = async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 };
+const deleteOutletTable = async (req, res) => {
+  try {
+    const { table_id } = req.params;
+
+    if (!table_id) {
+      return res.error({
+        message: "Table id is required",
+        status: 400
+      });
+    }
+
+    // 1️⃣ Check if table exists
+    const { data: existingTable, error: fetchError } = await supabase
+      .from("outlet_tables")
+      .select("id, is_booked")
+      .eq("id", table_id)
+      .single();
+
+    if (fetchError || !existingTable) {
+      return res.error({
+        message: "Table not found",
+        status: 404
+      });
+    }
+
+    // 2️⃣ Optional safety: prevent deleting booked table
+    if (existingTable.is_booked) {
+      return res.error({
+        message: "Cannot delete a booked table",
+        status: 400
+      });
+    }
+
+    // 3️⃣ Delete table
+    const { error: deleteError } = await supabase
+      .from("outlet_tables")
+      .delete()
+      .eq("id", table_id);
+
+    if (deleteError) {
+      return res.error({
+        message: "Failed to delete table",
+        status: 400
+      });
+    }
+
+    return res.success({
+      message: "Table deleted successfully"
+    });
+
+  } catch (err) {
+    console.error("deleteOutletTable:", err);
+    return res.error({
+      message: "Internal server error",
+      status: 500
+    });
+  }
+};
 
 module.exports = {
   addOutletTable,
@@ -232,5 +290,6 @@ module.exports = {
   toggleTableStatus,
   getAll,
   getDetails,
-  update
+  update,
+  deleteOutletTable
 };
