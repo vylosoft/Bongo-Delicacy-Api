@@ -1,7 +1,6 @@
-import crypto from "crypto";
-import fetch from "node-fetch";
-import Joi from "joi";
-import supabase from "../../../config/db.js";
+const Joi = require("joi");
+const crypto = require("crypto");
+const supabase = require("../../../config/db");
 
 /* -------------------- VALIDATION -------------------- */
 
@@ -25,7 +24,8 @@ const hashPayload = (payload) =>
   crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 
 async function downloadImage(url) {
-  const res = await fetch(url, { timeout: 10000 });
+  // Node 18+ has built-in fetch
+  const res = await fetch(url);
 
   if (!res.ok) {
     throw new Error(`Image fetch failed: ${res.status}`);
@@ -61,9 +61,7 @@ async function uploadImage(buffer, rest_id, itemid) {
  * Only URLs inside payload are replaced.
  */
 async function persistMenuImages(payload, rest_id) {
-  if (!Array.isArray(payload.items)) {
-    return payload;
-  }
+  if (!Array.isArray(payload.items)) return payload;
 
   for (const item of payload.items) {
     if (!item.itemid) continue;
@@ -75,10 +73,7 @@ async function persistMenuImages(payload, rest_id) {
       const permanentUrl = await uploadImage(buffer, rest_id, item.itemid);
       item.item_image_url = permanentUrl;
     } catch (err) {
-      console.error(
-        `Image failed for item ${item.itemid}:`,
-        err.message
-      );
+      console.error(`Image failed for item ${item.itemid}:`, err.message);
     }
   }
 
@@ -87,7 +82,7 @@ async function persistMenuImages(payload, rest_id) {
 
 /* -------------------- WEBHOOK -------------------- */
 
-export const pushMenuWebhook = async (req, res) => {
+const pushMenuWebhook = async (req, res) => {
   try {
     const { error } = pushMenuSchema.validate(req.body);
     if (error) {
@@ -95,7 +90,6 @@ export const pushMenuWebhook = async (req, res) => {
     }
 
     const rawPayload = req.body;
-
     const restaurant = rawPayload?.restaurants?.[0];
     const details = restaurant?.details || {};
 
@@ -116,10 +110,10 @@ export const pushMenuWebhook = async (req, res) => {
     const longitude = details.longitude ? Number(details.longitude) : null;
     const restaurant_id = restaurantid ? String(restaurantid) : null;
 
-    // 🔒 explicitly keep restaurant open
     const isclosed = false;
-
     const now = new Date().toISOString();
+
+    /* ---- check existing cache ---- */
 
     const { data: existing } = await supabase
       .from("petpooja_menu_cache")
@@ -141,8 +135,12 @@ export const pushMenuWebhook = async (req, res) => {
         reason: "menu unchanged",
       });
     }
+
+    /* ---- ensure restaurant exists ---- */
+
     let supabase_resturent_id = null;
-    const { data, error: restFetchErr } = await supabase
+
+    const { data } = await supabase
       .from("restaurants")
       .select("id")
       .eq("petpuja_resturant_id", restaurant.restaurantid)
@@ -151,33 +149,40 @@ export const pushMenuWebhook = async (req, res) => {
     if (!data) {
       const resturentPayload = {
         name: restaurant?.details?.restaurantname || "",
-        petpuja_resturant_id: restaurant.restaurantid
+        petpuja_resturant_id: restaurant.restaurantid,
       };
+
       const resturentData = await supabase
         .from("restaurants")
         .insert(resturentPayload)
         .select("id")
         .single();
-      console.log("db data1", resturentData);
+
       supabase_resturent_id = resturentData.data.id;
     } else {
-      console.log("db data2", data);
       supabase_resturent_id = data.id;
     }
-    
+
+    /* ---- upsert outlet ---- */
+
     const outletPayload = {
       resturent_id: supabase_resturent_id,
       lat: details.latitude,
       long: details.longitude,
-      is_active: restaurant.active === "1" ? true : false,
-      petpooja_outlet_id:details.menusharingcode,
+      is_active: restaurant.active === "1",
+      petpooja_outlet_id: details.menusharingcode,
       contact: details.contact,
       address: details.address,
       city: details.city,
-      state: details.state
-    }
-    
-    await supabase.from("outlet").upsert(outletPayload, { onConflict: "petpooja_outlet_id" }).select("id").single();
+      state: details.state,
+    };
+
+    await supabase
+      .from("outlet")
+      .upsert(outletPayload, { onConflict: "petpooja_outlet_id" });
+
+    /* ---- cache menu ---- */
+
     const { error: upsertError } = await supabase
       .from("petpooja_menu_cache")
       .upsert(
@@ -210,7 +215,7 @@ export const pushMenuWebhook = async (req, res) => {
 
 /* -------------------- GET CACHED MENU -------------------- */
 
-export const getCachedMenu = async (req, res) => {
+const getCachedMenu = async (req, res) => {
   try {
     const rest_id = String(req.query.resturent_identifier || "").trim();
 
@@ -241,4 +246,11 @@ export const getCachedMenu = async (req, res) => {
     console.error("getCachedMenu error:", err);
     return res.status(500).json({ ok: false });
   }
+};
+
+/* -------------------- EXPORTS -------------------- */
+
+module.exports = {
+  pushMenuWebhook,
+  getCachedMenu,
 };
