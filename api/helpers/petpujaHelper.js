@@ -40,13 +40,17 @@ const placeOrderWithPetpuja = async (orderinfo) => {
     const { data } = await petpujaClient.post("/save_order", payload);
     return data;
   } catch (error) {
-    const errData = error.response?.data || error.message || error;
-    const status = error.response?.status || 500;
-    const e = new Error("Failed to place order with PetPooja");
-    e.statusCode = status;
-    e.details = errData;
-    throw e;
-  }
+  const status = error.response?.status || 500;
+  const details = error.response?.data || error.message;
+
+  const e = new Error(
+    `PetPooja Error ${status}: ${JSON.stringify(details)}`
+  );
+
+  e.statusCode = status;
+  e.details = details;
+  throw e;
+}
 };
 
 
