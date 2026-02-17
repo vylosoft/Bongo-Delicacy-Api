@@ -87,13 +87,14 @@ const uploadRestaurantImage = async (req, res) => {
     }
 
     const {value, error: validationError } = imageUploadSchema(payload);
-    const { id, type } = value;
+    
     if (validationError) {
           return res.error({
             message: validationError.details.map((e) => e.message).join(", "),
             status: 400
           });
         }
+    const { id, type } = value;
     const ext = (req.file.originalname.split(".").pop() || "jpg").toLowerCase();
     const filePath = `restaurants/${id}/${type}-${Date.now()}.${ext}`;
 

@@ -1,8 +1,5 @@
 const axios = require("axios");
-
-const FLASH_BASE_URL = process.env.FLASH_BASE_URL || "https://open-api.flash.uengage.in";
-const FLASH_ACCESS_TOKEN = process.env.FLASH_ACCESS_TOKEN;
-const FLASH_STORE_ID = process.env.FLASH_STORE_ID;
+const { FLASH_ACCESS_TOKEN, FLASH_STORE_ID, FLASH_BASE_URL } = require("../../config/env");
 
 if (!FLASH_ACCESS_TOKEN || !FLASH_STORE_ID) {
   throw new Error("Missing FLASH_ACCESS_TOKEN or FLASH_STORE_ID in environment variables");
