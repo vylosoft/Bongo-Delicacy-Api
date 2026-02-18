@@ -188,9 +188,93 @@ const update = async (req, res) => {
     });
   }
 };
+const getDistanceKm = (lat1, lon1, lat2, lon2) => {
+  const toRad = (v) => (v * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const getByLocation = async (req, res) => {
+  try {
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
+    const hasLocation = !isNaN(lat) && !isNaN(lng);
+
+    const { data, error: dbError } = await supabase
+      .from("outlet")
+      .select(`*, restaurants(*)`);
+
+    if (dbError) {
+      console.log(dbError);
+      return res.error({ message: "Error occured during fetching the data", status: 500 });
+    }
+
+    let result = data ?? [];
+
+    if (hasLocation) {
+      // Attach distance
+      result = result.map((o) => ({
+        ...o,
+        distance_km:
+          o.lat != null && o.long != null
+            ? Number(getDistanceKm(lat, lng, o.lat, o.long).toFixed(2))
+            : null,
+      }));
+
+      // Sort: closest first, nulls last
+      result.sort((a, b) => {
+        if (a.distance_km == null && b.distance_km == null) return a.name.localeCompare(b.name);
+        if (a.distance_km == null) return 1;
+        if (b.distance_km == null) return -1;
+        return a.distance_km - b.distance_km;
+      });
+    } else {
+      // No location → sort alphabetically (same as your admin default)
+      result.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    // Attach nearest active alternative to inactive outlets
+    const activeOutlets = result.filter((o) => o.is_active);
+
+    result = result.map((o) => {
+      if (o.is_active) return o;
+
+      const alternative =
+        activeOutlets
+          .filter((a) => a.id !== o.id)
+          .sort((a, b) => (a.distance_km ?? Infinity) - (b.distance_km ?? Infinity))[0] ?? null;
+
+      return {
+        ...o,
+        alternative: alternative
+          ? {
+              id: alternative.id,
+              name: alternative.name,
+              petpooja_outlet_id: alternative.petpooja_outlet_id,
+              resturent_id: alternative.resturent_id,
+              distance_km: alternative.distance_km,
+            }
+          : null,
+      };
+    });
+
+    return res.success({
+      data: { result, count: result.length },
+    });
+  } catch (error) {
+    console.log(error);
+    return res.error({ message: "Internal server error", status: 500 });
+  }
+};
 module.exports = {
     getAll,
     getDetails,
     uploadOutletImage,
-    update
+    update,
+    getByLocation
 }

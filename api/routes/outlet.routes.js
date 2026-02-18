@@ -7,12 +7,13 @@ const upload = multer({ storage: multer.memoryStorage() });
 const outletController = require("../controllers/outlet.controller");
 
 router.get("/", outletController.getAll);
-
+router.get("/getbylocation", outletController.getByLocation);
 router.get("/:uuid", outletController.getDetails);
 
 router.post("/upload-image", upload.single("file"), outletController.uploadOutletImage);
 
 router.put("/:id", outletController.update);
+
 
 
 module.exports = router;

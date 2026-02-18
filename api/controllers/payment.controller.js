@@ -106,7 +106,7 @@ const createOrder = async (req, res) => {
 
       // 1️⃣ User preferences
       const prefs = await fetchUserPreferences(userId);
-console.log("[DEBUG PREFS]", prefs);
+      console.log("[DEBUG PREFS]", prefs);
       // 2️⃣ Past feedback (THIS WAS MISSING / WRONG EARLIER)
       const pastItemFeedback = await fetchRelevantOrderFeedback(
         supabase,
@@ -261,7 +261,7 @@ const verifyPayment = async (req, res) => {
       id: clientorderID,
       brand_id: brandId,
       user_id: userId,
-
+      restaurant_name: restaurantName,
       items: normalizedItems,
       customer,
       delivery_address: deliveryAddress,
