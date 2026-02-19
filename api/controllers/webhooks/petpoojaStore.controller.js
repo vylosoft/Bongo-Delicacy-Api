@@ -3,10 +3,10 @@ const supabase = require("../../../config/db");
 
 const DEFAULT_TZ_OFFSET = "+05:30";
 
-function normalizeTurnOnTime(turn_on_time, tzOffset = DEFAULT_TZ_OFFSET) {
-  if (!turn_on_time || typeof turn_on_time !== "string") return null;
+function normalizeTime(time, tzOffset = DEFAULT_TZ_OFFSET) {
+  if (!time || typeof time !== "string") return null;
 
-  const t = turn_on_time.trim();
+  const t = time.trim();
   if (!t) return null;
 
   const isoish = t.replace(" ", "T") + tzOffset;
@@ -29,16 +29,19 @@ async function handlePetPoojaStoreWebhook(req, res) {
       });
     }
 
+    // PetPooja:
+    // 1 = OPEN
+    // 0 = CLOSED
     const store_status = Number(body.store_status);
-    const isclosed = store_status === 0;
 
-    const turn_on_time = isclosed
-      ? normalizeTurnOnTime(body.turn_on_time)
-      : null;
+    const is_active = store_status === 1;
+
+    // only update open_hour when store becomes active
+    const open_hour = is_active ? normalizeTime(body.turn_on_time) : null;
 
     const updates = {
-      isclosed,
-      turn_on_time,
+      is_active,
+      open_hour,
     };
 
     const { data, error } = await supabase
