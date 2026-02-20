@@ -5,13 +5,10 @@ const DEFAULT_TZ_OFFSET = "+05:30";
 
 function normalizeTime(time, tzOffset = DEFAULT_TZ_OFFSET) {
   if (!time || typeof time !== "string") return null;
-
   const t = time.trim();
   if (!t) return null;
-
   const isoish = t.replace(" ", "T") + tzOffset;
   const d = new Date(isoish);
-
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
 }
@@ -33,11 +30,11 @@ async function handlePetPoojaStoreWebhook(req, res) {
     // 1 = OPEN
     // 0 = CLOSED
     const store_status = Number(body.store_status);
-
     const is_active = store_status === 1;
 
-    // only update open_hour when store becomes active
-    const open_hour = is_active ? normalizeTime(body.turn_on_time) : null;
+    // Always save turn_on_time regardless of store_status
+    // (represents scheduled next open time, useful even when store is closing)
+    const open_hour = normalizeTime(body.turn_on_time);
 
     const updates = {
       is_active,
