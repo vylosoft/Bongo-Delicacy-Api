@@ -14,7 +14,6 @@ const {
   generateOrderDescription,
 } = require("../services/gemini.orderEnhancer.js");
 
-const { createClient } = require("@supabase/supabase-js");
 
 const supabase = require("../../config/db");
 const normalizeOrderItem = (item) => {
@@ -87,6 +86,11 @@ const createOrder = async (req, res) => {
     return res.status(400).json({ success: false });
   }
 
+  const razorpay = new Razorpay({
+      key_id: env.RAZORPAY_KEY_ID,
+      key_secret: env.RAZORPAY_KEY_SECRET,
+    });
+
   const { orderinfo, userId } = value;
 
   const orderDetails = orderinfo.OrderInfo.Order.details;
@@ -96,7 +100,7 @@ const createOrder = async (req, res) => {
   const clientorderID = generateOrderId();
   orderDetails.orderID = clientorderID;
   orderDetails.clientorderID = clientorderID;
-
+  const customerDetails = orderinfo.OrderInfo.Customer.details;
   console.log("[CREATE_ORDER] Generated clientorderID:", clientorderID);
 
   /* ================== DESCRIPTION ================== */
@@ -104,23 +108,13 @@ const createOrder = async (req, res) => {
     if (userId) {
       console.log("[CREATE_ORDER] Fetching user preferences:", userId);
 
-      // 1️⃣ User preferences
-      const prefs = await fetchUserPreferences(userId);
-      console.log("[DEBUG PREFS]", prefs);
-      // 2️⃣ Past feedback (THIS WAS MISSING / WRONG EARLIER)
-      const pastItemFeedback = await fetchRelevantOrderFeedback(
-        supabase,
-        userId,
-        orderItems
-      );
-
-      console.log(
-        "[CREATE_ORDER] Past feedback count:",
-        pastItemFeedback.length
-      );
-
-      // 3️⃣ Generate AI description (CORRECT ARGUMENTS)
-      console.log("[CREATE_ORDER] Generating AI description");
+      // 1️⃣ & 2️⃣ Fetch preferences and past feedback concurrently
+      const [prefs, pastItemFeedback] = await Promise.all([
+        fetchUserPreferences(userId),
+        fetchRelevantOrderFeedback(supabase, userId, orderItems)
+      ]);
+      console.log("prefs::", prefs);
+      console.log("pastItemFeedback", pastItemFeedback);
 
       const aiResult = await generateOrderDescription(
         prefs,
@@ -133,10 +127,6 @@ const createOrder = async (req, res) => {
           ? aiResult
           : aiResult?.description || "";
 
-      console.log(
-        "[CREATE_ORDER] AI description length:",
-        orderDetails.description.length
-      );
     } else {
       orderDetails.description = "";
       console.log("[CREATE_ORDER] No userId, description skipped");
@@ -146,36 +136,47 @@ const createOrder = async (req, res) => {
     orderDetails.description = "";
   }
 
-  /* ================== PETPOOJA ================== */
-  try {
-    console.log("[CREATE_ORDER] Sending order to PetPooja");
-    await placeOrderWithPetpuja(orderinfo);
-    console.log("[CREATE_ORDER] PetPooja order placed");
-  } catch (err) {
-    console.error("[CREATE_ORDER] PetPooja order failed:", err);
-    return res.status(502).json({
-      success: false,
-      message: "PetPooja order failed",
-    });
-  }
-
   /* ================== RAZORPAY ================== */
   try {
     console.log("[CREATE_ORDER] Creating Razorpay order");
-
-    const razorpay = new Razorpay({
-      key_id: env.RAZORPAY_KEY_ID,
-      key_secret: env.RAZORPAY_KEY_SECRET,
-    });
 
     const rpOrder = await razorpay.orders.create({
       amount: Number(orderDetails.total) * 100,
       currency: "INR",
       receipt: `pp_${clientorderID}`,
     });
-
+  /* ================== PETPOOJA ================== */
+    try {
+      console.log("[CREATE_ORDER] Sending order to PetPooja");
+      await placeOrderWithPetpuja(orderinfo);
+      console.log("[CREATE_ORDER] PetPooja order placed");
+    } catch (err) {
+      console.error("[CREATE_ORDER] PetPooja order failed:", err);
+      return res.status(502).json({
+        success: false,
+        message: "PetPooja order failed",
+      });
+    }
     console.log("[CREATE_ORDER] Razorpay order created:", rpOrder.id);
+    const normalizedItems = orderItems.map(normalizeOrderItem);
+    const orderRow = {
+      id: clientorderID,
+      brand_id: restaurantDetails.restID,
+      user_id: userId,
+      items: normalizedItems,
+      customer: customerDetails,
+      status: "PENDING",
+      created_at: new Date().toISOString(),
+    };
 
+    console.log("[VERIFY_PAYMENT] Inserting order into DB");
+
+    const { error } = await supabase.from("orders").insert(orderRow);
+
+    if (error) {
+      console.error("[VERIFY_PAYMENT] Supabase insert failed:", error);
+      throw error;
+    }
     return res.json({
       success: true,
       clientorderID,
@@ -249,7 +250,6 @@ const verifyPayment = async (req, res) => {
   try {
     const { brandId, userId, items, customer, deliveryAddress, pricing } =
       orderData;
-    const normalizedItems = items.map(normalizeOrderItem);
     // 🔐 Optional but recommended safety check
     // if (pricing.total_amount * 100 !== Number(req.body.razorpay_amount)) {
     //   throw new Error("Amount mismatch detected");
@@ -258,12 +258,7 @@ const verifyPayment = async (req, res) => {
     const pointsEarned = Math.floor(pricing.total_amount / 100);
 
     const orderRow = {
-      id: clientorderID,
-      brand_id: brandId,
-      user_id: userId,
       restaurant_name: restaurantName,
-      items: normalizedItems,
-      customer,
       delivery_address: deliveryAddress,
 
       subtotal: pricing.subtotal,
@@ -274,15 +269,14 @@ const verifyPayment = async (req, res) => {
       total_amount: pricing.total_amount,
 
       points_earned: pointsEarned,
-      status: "received",
+      status: "RECEIVED",
       external_order_id: razorpay_order_id,
-      refund_id: razorpay_payment_id,
-      created_at: new Date().toISOString(),
+      refund_id: razorpay_payment_id
     };
 
     console.log("[VERIFY_PAYMENT] Inserting order into DB");
-
-    const { error } = await supabase.from("orders").insert(orderRow);
+    const { error } = await supabase.from("orders").update(orderRow).eq("id", clientorderID);
+    //const { error } = await supabase.from("orders").insert(orderRow);
 
     if (error) {
       console.error("[VERIFY_PAYMENT] Supabase insert failed:", error);
