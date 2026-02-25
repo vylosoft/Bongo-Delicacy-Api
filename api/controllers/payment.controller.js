@@ -17,9 +17,9 @@ const {
 
 const supabase = require("../../config/db");
 const razorpay = new Razorpay({
-      key_id: env.RAZORPAY_KEY_ID,
-      key_secret: env.RAZORPAY_KEY_SECRET
-    });
+  key_id: env.RAZORPAY_KEY_ID,
+  key_secret: env.RAZORPAY_KEY_SECRET
+});
 
 const normalizeOrderItem = (item) => {
   const basePrice = Number(item.base_price ?? item.price ?? 0);
@@ -84,14 +84,14 @@ const normalizeOrderItem = (item) => {
 ------------------------------------------------------- */
 const createOrder = async (req, res) => {
   try {
-    const { error : validationError, value } = saveOrderSchema(req.body);
+    const { error: validationError, value } = saveOrderSchema(req.body);
     if (validationError) {
       return res.error({
         message: validationError.details.map((e) => e.message).join(", "),
         status: 400
       });
     }
-  
+
     const { orderinfo, userId } = value;
 
     const orderDetails = orderinfo.OrderInfo.Order.details;
@@ -176,11 +176,11 @@ const createOrder = async (req, res) => {
         message: "Internal issue occured. Please contact resturent.",
       });
     }
-     return res.json({
-       success: true,
-       clientorderID,
-       razorpayOrder: razorPayResponse
-     });
+    return res.json({
+      success: true,
+      clientorderID,
+      razorpayOrder: razorPayResponse
+    });
 
   } catch (error) {
     return res.error({
@@ -232,8 +232,7 @@ const verifyPayment = async (req, res) => {
   console.log("[VERIFY_PAYMENT] Signature verified");
 
   try {
-    const { brandId, userId, items, customer, deliveryAddress, pricing } =
-      orderData;
+    const { brandId, restaurantName, userId, items, customer, deliveryAddress, pricing } = orderData;
     // 🔐 Optional but recommended safety check
     // if (pricing.total_amount * 100 !== Number(req.body.razorpay_amount)) {
     //   throw new Error("Amount mismatch detected");
