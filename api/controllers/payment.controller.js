@@ -147,35 +147,28 @@ const createOrder = async (req, res) => {
       id: clientorderID,
       brand_id: restaurantDetails.restID,
       user_id: userId,
+      orderinfo,                // ✅ save full orderinfo so verifyPayment can use it for PetPooja
       items: normalizedItems,
       customer: customerDetails,
       status: "PENDING",
       created_at: new Date().toISOString(),
     };
 
-    console.log("[VERIFY_PAYMENT] Inserting order into DB");
+    console.log("[CREATE_ORDER] Inserting order into DB");
 
     const { error } = await supabase.from("orders").insert(orderRow);
 
     if (error) {
-      console.error("[VERIFY_PAYMENT] Supabase insert failed:", error);
+      console.error("[CREATE_ORDER] Supabase insert failed:", error);
       return res.error({
-        message: `Oops! We’re having some technical trouble. If your payment went through, please give us a shout and we’ll make things right!`,
+        message: `Oops! We're having some technical trouble. If your payment went through, please give us a shout and we'll make things right!`,
         status: 400
       });
     }
-    /* ================== PETPOOJA ================== */
-    try {
-      console.log("[CREATE_ORDER] Sending order to PetPooja");
-      await placeOrderWithPetpuja(orderinfo);
-      console.log("[CREATE_ORDER] PetPooja order placed");
-    } catch (err) {
-      console.error("[CREATE_ORDER] PetPooja order failed:", err);
-      return res.status(502).json({
-        success: false,
-        message: "Internal issue occured. Please contact resturent.",
-      });
-    }
+
+    // ⛔ PetPooja is NOT called here anymore.
+    // ✅ It will only be called after payment is verified in verifyPayment()
+
     return res.json({
       success: true,
       clientorderID,
@@ -191,7 +184,7 @@ const createOrder = async (req, res) => {
 };
 
 /* -------------------------------------------------------
-   VERIFY PAYMENT + CREATE DB ORDER
+   VERIFY PAYMENT + UPDATE DB ORDER + NOTIFY PETPOOJA
 ------------------------------------------------------- */
 const verifyPayment = async (req, res) => {
   console.log("[VERIFY_PAYMENT] Incoming request");
@@ -204,6 +197,7 @@ const verifyPayment = async (req, res) => {
     orderData,
   } = req.body;
 
+  /* ================== VERIFY SIGNATURE ================== */
   const body = `${razorpay_order_id}|${razorpay_payment_id}`;
   const expected = crypto
     .createHmac("sha256", env.RAZORPAY_KEY_SECRET)
@@ -216,27 +210,19 @@ const verifyPayment = async (req, res) => {
       received: razorpay_signature,
     });
 
-    try {
-      await cancelPetpujaOrder({
-        restID: orderData.brandId,
-        clientorderID,
-        cancelReason: "Signature mismatch",
-      });
-    } catch (err) {
-      console.error("[VERIFY_PAYMENT] Failed to cancel PetPooja:", err);
-    }
+    // Mark order as PAYMENT_FAILED in DB
+    await supabase
+      .from("orders")
+      .update({ status: "PAYMENT_FAILED" })
+      .eq("id", clientorderID);
 
-    return res.status(400).json({ success: false });
+    return res.status(400).json({ success: false, message: "Payment verification failed." });
   }
 
-  console.log("[VERIFY_PAYMENT] Signature verified");
+  console.log("[VERIFY_PAYMENT] Signature verified ✅");
 
   try {
     const { brandId, restaurantName, userId, items, customer, deliveryAddress, pricing } = orderData;
-    // 🔐 Optional but recommended safety check
-    // if (pricing.total_amount * 100 !== Number(req.body.razorpay_amount)) {
-    //   throw new Error("Amount mismatch detected");
-    // }
 
     const pointsEarned = Math.floor(pricing.total_amount / 100);
 
@@ -257,30 +243,44 @@ const verifyPayment = async (req, res) => {
       refund_id: razorpay_payment_id
     };
 
-    console.log("[VERIFY_PAYMENT] Inserting order into DB");
+    console.log("[VERIFY_PAYMENT] Updating order in DB");
     const { error } = await supabase.from("orders").update(orderRow).eq("id", clientorderID);
-    //const { error } = await supabase.from("orders").insert(orderRow);
 
     if (error) {
-      console.error("[VERIFY_PAYMENT] Supabase insert failed:", error);
+      console.error("[VERIFY_PAYMENT] Supabase update failed:", error);
       throw error;
     }
 
-    console.log("[VERIFY_PAYMENT] Order saved successfully");
+    console.log("[VERIFY_PAYMENT] Order updated successfully ✅");
 
-    return res.json({ success: true });
-  } catch (err) {
-    console.error("[VERIFY_PAYMENT] Order processing failed:", err);
+    /* ================== PETPOOJA — only after payment confirmed ================== */
+    // Fetch the saved orderinfo from DB (stored during createOrder)
+    const { data: savedOrder, error: fetchError } = await supabase
+      .from("orders")
+      .select("orderinfo")
+      .eq("id", clientorderID)
+      .single();
+
+    if (fetchError || !savedOrder?.orderinfo) {
+      console.error("[VERIFY_PAYMENT] Failed to fetch orderinfo for PetPooja:", fetchError);
+      // Order is paid & saved — still return success, but log for manual retry
+      return res.json({ success: true, warning: "Order received but PetPooja notification failed. Please contact support." });
+    }
 
     try {
-      await cancelPetpujaOrder({
-        restID: orderData.brandId,
-        clientorderID,
-        cancelReason: "DB insert failed",
-      });
-    } catch (cancelErr) {
-      console.error("[VERIFY_PAYMENT] Failed to cancel PetPooja:", cancelErr);
+      console.log("[VERIFY_PAYMENT] Sending order to PetPooja ✅");
+      await placeOrderWithPetpuja(savedOrder.orderinfo);
+      console.log("[VERIFY_PAYMENT] PetPooja order placed ✅");
+    } catch (err) {
+      console.error("[VERIFY_PAYMENT] PetPooja order failed:", err);
+      // Payment is done, so don't fail the response — alert the restaurant instead
+      return res.json({ success: true, warning: "Payment received but restaurant notification failed. Please contact the restaurant." });
     }
+
+    return res.json({ success: true });
+
+  } catch (err) {
+    console.error("[VERIFY_PAYMENT] Order processing failed:", err);
 
     return res.status(500).json({ success: false });
   }
@@ -300,6 +300,12 @@ const cancelOrderOnPaymentfailed = async (req, res) => {
       clientorderID,
       cancelReason,
     });
+
+    // Also update DB status
+    await supabase
+      .from("orders")
+      .update({ status: "PAYMENT_FAILED" })
+      .eq("id", clientorderID);
 
     console.log("[CANCEL_ORDER] Order cancelled successfully");
 
