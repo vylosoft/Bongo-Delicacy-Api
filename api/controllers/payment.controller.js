@@ -147,28 +147,36 @@ const createOrder = async (req, res) => {
       id: clientorderID,
       brand_id: restaurantDetails.restID,
       user_id: userId,
-      orderinfo,                // ✅ save full orderinfo so verifyPayment can use it for PetPooja
       items: normalizedItems,
       customer: customerDetails,
+      description: orderDetails.description || "",
       status: "PENDING",
       created_at: new Date().toISOString(),
     };
 
-    console.log("[CREATE_ORDER] Inserting order into DB");
+    console.log("[VERIFY_PAYMENT] Inserting order into DB");
 
     const { error } = await supabase.from("orders").insert(orderRow);
 
     if (error) {
-      console.error("[CREATE_ORDER] Supabase insert failed:", error);
+      console.error("[VERIFY_PAYMENT] Supabase insert failed:", error);
       return res.error({
-        message: `Oops! We're having some technical trouble. If your payment went through, please give us a shout and we'll make things right!`,
+        message: `Oops! We’re having some technical trouble. If your payment went through, please give us a shout and we’ll make things right!`,
         status: 400
       });
     }
-
-    // ⛔ PetPooja is NOT called here anymore.
-    // ✅ It will only be called after payment is verified in verifyPayment()
-
+    /* ================== PETPOOJA ================== */
+    try {
+      // console.log("[CREATE_ORDER] Sending order to PetPooja");
+      // await placeOrderWithPetpuja(orderinfo);
+      // console.log("[CREATE_ORDER] PetPooja order placed");
+    } catch (err) {
+      console.error("[CREATE_ORDER] PetPooja order failed:", err);
+      return res.status(502).json({
+        success: false,
+        message: "Internal issue occured. Please contact resturent.",
+      });
+    }
     return res.json({
       success: true,
       clientorderID,
@@ -184,108 +192,194 @@ const createOrder = async (req, res) => {
 };
 
 /* -------------------------------------------------------
-   VERIFY PAYMENT + UPDATE DB ORDER + NOTIFY PETPOOJA
+   VERIFY PAYMENT + CREATE DB ORDER
+------------------------------------------------------- */
+/* -------------------------------------------------------
+   VERIFY PAYMENT + SEND ORDER TO PETPOOJA
 ------------------------------------------------------- */
 const verifyPayment = async (req, res) => {
-  console.log("[VERIFY_PAYMENT] Incoming request");
-
-  const {
-    razorpay_payment_id,
-    razorpay_order_id,
-    razorpay_signature,
-    clientorderID,
-    orderData,
-  } = req.body;
-
-  /* ================== VERIFY SIGNATURE ================== */
-  const body = `${razorpay_order_id}|${razorpay_payment_id}`;
-  const expected = crypto
-    .createHmac("sha256", env.RAZORPAY_KEY_SECRET)
-    .update(body)
-    .digest("hex");
-
-  if (expected !== razorpay_signature) {
-    console.error("[VERIFY_PAYMENT] Signature mismatch", {
-      expected,
-      received: razorpay_signature,
-    });
-
-    // Mark order as PAYMENT_FAILED in DB
-    await supabase
-      .from("orders")
-      .update({ status: "PAYMENT_FAILED" })
-      .eq("id", clientorderID);
-
-    return res.status(400).json({ success: false, message: "Payment verification failed." });
-  }
-
-  console.log("[VERIFY_PAYMENT] Signature verified ✅");
+  console.log("\n================ VERIFY PAYMENT START ================");
 
   try {
-    const { brandId, restaurantName, userId, items, customer, deliveryAddress, pricing } = orderData;
+    const {
+      razorpay_payment_id,
+      razorpay_order_id,
+      razorpay_signature,
+      clientorderID,
+      orderData,
+    } = req.body;
+
+    /* ---------- SIGNATURE VERIFY ---------- */
+
+    const body = `${razorpay_order_id}|${razorpay_payment_id}`;
+
+    const expected = crypto
+      .createHmac("sha256", env.RAZORPAY_KEY_SECRET)
+      .update(body)
+      .digest("hex");
+
+    if (expected !== razorpay_signature) {
+      console.error("❌ Signature mismatch");
+      return res.status(400).json({
+        success: false,
+        message: "Invalid signature",
+      });
+    }
+
+    console.log("✅ Signature verified");
+
+    /* ---------- LOAD ORDER FROM DB ---------- */
+
+    const { data: savedOrder, error: fetchError } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("id", clientorderID)
+      .single();
+
+    if (fetchError || !savedOrder) {
+      throw new Error("Order not found in DB");
+    }
+
+    console.log("✅ Order loaded from DB");
+
+    /* ---------- BUILD PETPOOJA PAYLOAD ---------- */
+
+    const { restaurantName, deliveryAddress, pricing } = orderData;
+
+    const orderinfo = {
+      OrderInfo: {
+        Restaurant: {
+          details: {
+            restID: savedOrder.brand_id,
+          },
+        },
+
+        Customer: {
+          details: savedOrder.customer,
+        },
+
+        Order: {
+          details: {
+            preorder_date: new Date().toISOString().slice(0, 10),
+            preorder_time: new Date()
+              .toTimeString()
+              .split(" ")[0],
+
+            service_charge: "0",
+            sc_tax_amount: "0",
+
+            delivery_charges: String(pricing.delivery_charge || 0),
+            dc_tax_percentage: "0",
+            dc_tax_amount: "0",
+            dc_gst_details: [],
+
+            packing_charges: "0",
+            pc_tax_amount: "0",
+            pc_tax_percentage: "0",
+            pc_gst_details: [],
+
+            order_type: "H",
+            advanced_order: "N",
+            urgent_order: false,
+            urgent_time: 0,
+
+            payment_type: "ONLINE",
+            table_no: "",
+            no_of_persons: "0",
+
+            discount_total: String(
+              (pricing.flat_discount || 0) +
+                (pricing.loyalty_discount || 0)
+            ),
+
+            discount_type:
+              pricing.flat_discount || pricing.loyalty_discount ? "F" : "",
+
+            tax_total: String(pricing.gst_amount || 0),
+            total: String(pricing.total_amount || 0),
+
+            created_on: new Date()
+              .toISOString()
+              .replace("T", " ")
+              .substring(0, 19),
+
+            enable_delivery: 1,
+            callback_url: `${env.BASE_URL}/petpuja/callback`,
+            collect_cash: "0",
+
+            /* ⭐ MOST IMPORTANT PART */
+            orderID: clientorderID,
+            clientorderID: clientorderID,
+            description: savedOrder.description || "",
+          },
+        },
+
+        OrderItem: {
+          details: savedOrder.items,
+        },
+      },
+
+      Tax: {
+        details: orderData.taxSummary || [],
+      },
+
+      udid: "",
+      device_type: "Web",
+    };
+
+    console.log("🚀 Sending order to PetPooja");
+
+    const petpujaResponse = await placeOrderWithPetpuja(orderinfo);
+
+    console.dir(petpujaResponse, { depth: null });
+
+    if (!petpujaResponse || petpujaResponse.success === false) {
+      throw new Error("PetPooja order failed");
+    }
+
+    console.log("✅ PetPooja success");
+
+    /* ---------- UPDATE ORDER IN DB ---------- */
 
     const pointsEarned = Math.floor(pricing.total_amount / 100);
 
-    const orderRow = {
+    const updateRow = {
       restaurant_name: restaurantName,
       delivery_address: deliveryAddress,
-
       subtotal: pricing.subtotal,
       discount_amount: pricing.flat_discount,
       loyalty_discount: pricing.loyalty_discount,
       gst_amount: pricing.gst_amount,
       delivery_charge: pricing.delivery_charge,
       total_amount: pricing.total_amount,
-
       points_earned: pointsEarned,
       status: "RECEIVED",
       external_order_id: razorpay_order_id,
-      refund_id: razorpay_payment_id
+      refund_id: razorpay_payment_id,
     };
 
-    console.log("[VERIFY_PAYMENT] Updating order in DB");
-    const { error } = await supabase.from("orders").update(orderRow).eq("id", clientorderID);
-
-    if (error) {
-      console.error("[VERIFY_PAYMENT] Supabase update failed:", error);
-      throw error;
-    }
-
-    console.log("[VERIFY_PAYMENT] Order updated successfully ✅");
-
-    /* ================== PETPOOJA — only after payment confirmed ================== */
-    // Fetch the saved orderinfo from DB (stored during createOrder)
-    const { data: savedOrder, error: fetchError } = await supabase
+    const { error: updateError } = await supabase
       .from("orders")
-      .select("orderinfo")
-      .eq("id", clientorderID)
-      .single();
+      .update(updateRow)
+      .eq("id", clientorderID);
 
-    if (fetchError || !savedOrder?.orderinfo) {
-      console.error("[VERIFY_PAYMENT] Failed to fetch orderinfo for PetPooja:", fetchError);
-      // Order is paid & saved — still return success, but log for manual retry
-      return res.json({ success: true, warning: "Order received but PetPooja notification failed. Please contact support." });
-    }
+    if (updateError) throw updateError;
 
-    try {
-      console.log("[VERIFY_PAYMENT] Sending order to PetPooja ✅");
-      await placeOrderWithPetpuja(savedOrder.orderinfo);
-      console.log("[VERIFY_PAYMENT] PetPooja order placed ✅");
-    } catch (err) {
-      console.error("[VERIFY_PAYMENT] PetPooja order failed:", err);
-      // Payment is done, so don't fail the response — alert the restaurant instead
-      return res.json({ success: true, warning: "Payment received but restaurant notification failed. Please contact the restaurant." });
-    }
+    console.log("✅ DB updated");
+    console.log("================ VERIFY PAYMENT SUCCESS ================\n");
 
     return res.json({ success: true });
 
   } catch (err) {
-    console.error("[VERIFY_PAYMENT] Order processing failed:", err);
+    console.error("❌ VERIFY PAYMENT FAILED");
+    console.error(err);
 
-    return res.status(500).json({ success: false });
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Order sync failed",
+    });
   }
 };
-
 /* -------------------------------------------------------
    CANCEL ON PAYMENT FAILURE
 ------------------------------------------------------- */
@@ -300,12 +394,6 @@ const cancelOrderOnPaymentfailed = async (req, res) => {
       clientorderID,
       cancelReason,
     });
-
-    // Also update DB status
-    await supabase
-      .from("orders")
-      .update({ status: "PAYMENT_FAILED" })
-      .eq("id", clientorderID);
 
     console.log("[CANCEL_ORDER] Order cancelled successfully");
 

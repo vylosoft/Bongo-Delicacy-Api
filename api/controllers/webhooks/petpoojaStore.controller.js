@@ -26,26 +26,22 @@ async function handlePetPoojaStoreWebhook(req, res) {
       });
     }
 
-    // PetPooja:
-    // 1 = OPEN
-    // 0 = CLOSED
     const store_status = Number(body.store_status);
     const is_active = store_status === 1;
 
-    // Always save turn_on_time regardless of store_status
-    // (represents scheduled next open time, useful even when store is closing)
-    const open_hour = normalizeTime(body.turn_on_time);
+    // ✅ Normalize turn_on_time → stored as outlet_open_date_time (timestamp)
+    const outlet_open_date_time = normalizeTime(body.turn_on_time);
 
     const updates = {
       is_active,
-      open_hour,
+      outlet_open_date_time, // ✅ matches the column name in Supabase
     };
 
     const { data, error } = await supabase
       .from("outlet")
       .update(updates)
       .eq("petpooja_outlet_id", restID)
-      .select("id, petpooja_outlet_id, is_active, open_hour");
+      .select("id, petpooja_outlet_id, is_active, outlet_open_date_time"); // ✅ updated select
 
     if (error) {
       console.error("Supabase update error:", error);
