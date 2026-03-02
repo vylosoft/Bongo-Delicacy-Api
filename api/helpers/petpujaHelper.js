@@ -6,7 +6,7 @@ const { riderStatusConfig } = require("../../config/constant");
 // axios instance for PetPooja
 const petpujaClient = axios.create({
   baseURL: process.env.PETPUJA_BASE_URL,
-  timeout: 10000
+  timeout: 30000
 });
 
 /**

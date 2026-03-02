@@ -14,13 +14,9 @@ const {
   generateOrderDescription,
 } = require("../services/gemini.orderEnhancer.js");
 
+const { createClient } = require("@supabase/supabase-js");
 
 const supabase = require("../../config/db");
-const razorpay = new Razorpay({
-  key_id: env.RAZORPAY_KEY_ID,
-  key_secret: env.RAZORPAY_KEY_SECRET
-});
-
 const normalizeOrderItem = (item) => {
   const basePrice = Number(item.base_price ?? item.price ?? 0);
   const gstAmount = Number(item.gst_total_amount ?? 0);
@@ -83,74 +79,181 @@ const normalizeOrderItem = (item) => {
    CREATE ORDER
 ------------------------------------------------------- */
 const createOrder = async (req, res) => {
+  console.log("[CREATE_ORDER] Incoming request");
+
+  const { error, value } = saveOrderSchema(req.body);
+  if (error) {
+    console.error("[CREATE_ORDER] Validation failed:", error);
+    return res.status(400).json({ success: false });
+  }
+
+  const { orderinfo, userId } = value;
+
+  const orderDetails = orderinfo.OrderInfo.Order.details;
+  const restaurantDetails = orderinfo.OrderInfo.Restaurant.details;
+  const orderItems = orderinfo.OrderInfo.OrderItem?.details || [];
+
+  const clientorderID = generateOrderId();
+  orderDetails.orderID = clientorderID;
+  orderDetails.clientorderID = clientorderID;
+
+  console.log("[CREATE_ORDER] Generated clientorderID:", clientorderID);
+
+  /* ================== DESCRIPTION ================== */
   try {
-    const { error: validationError, value } = saveOrderSchema(req.body);
-    if (validationError) {
-      return res.error({
-        message: validationError.details.map((e) => e.message).join(", "),
-        status: 400
-      });
-    }
-
-    const { orderinfo, userId } = value;
-
-    const orderDetails = orderinfo.OrderInfo.Order.details;
-    const restaurantDetails = orderinfo.OrderInfo.Restaurant.details;
-    const orderItems = orderinfo.OrderInfo.OrderItem?.details || [];
-
-    const clientorderID = generateOrderId();
-    orderDetails.orderID = clientorderID;
-    orderDetails.clientorderID = clientorderID;
-    orderDetails.description = "";
-    const customerDetails = orderinfo.OrderInfo.Customer.details;
-    let razorPayResponse = null;
-
-    /**
-     * Generate AI response to get insight.
-     */
     if (userId) {
-      try {
-        const [prefs, pastItemFeedback] = await Promise.all([
-          fetchUserPreferences(userId),
-          fetchRelevantOrderFeedback(supabase, userId, orderItems)
-        ]);
-        console.log("prefs::", prefs);
-        console.log("pastItemFeedback", pastItemFeedback);
+      console.log("[CREATE_ORDER] Fetching user preferences:", userId);
 
-        const aiResult = await generateOrderDescription(prefs, orderItems, pastItemFeedback);
+      const prefs = await fetchUserPreferences(userId);
+      console.log("[DEBUG PREFS]", prefs);
 
-        orderDetails.description = typeof aiResult === "string" ? aiResult : aiResult?.description || "";
-      } catch (e) {
-        console.log("AI result error:: ", e);
-      }
+      const pastItemFeedback = await fetchRelevantOrderFeedback(
+        supabase,
+        userId,
+        orderItems
+      );
+
+      console.log(
+        "[CREATE_ORDER] Past feedback count:",
+        pastItemFeedback.length
+      );
+
+      console.log("[CREATE_ORDER] Generating AI description");
+
+      const aiResult = await generateOrderDescription(
+        prefs,
+        orderItems,
+        pastItemFeedback
+      );
+
+      orderDetails.description =
+        typeof aiResult === "string"
+          ? aiResult
+          : aiResult?.description || "";
+
+      console.log(
+        "[CREATE_ORDER] AI description length:",
+        orderDetails.description.length
+      );
+    } else {
+      orderDetails.description = "";
+      console.log("[CREATE_ORDER] No userId, description skipped");
     }
+  } catch (err) {
+    console.error("[CREATE_ORDER] AI description failed:", err);
+    orderDetails.description = "";
+  }
 
-    /* ================== RAZORPAY ================== */
-    try {
-      razorPayResponse = await razorpay.orders.create({
-        amount: Number(orderDetails.total) * 100,
-        currency: "INR",
-        receipt: `pp_${clientorderID}`
-      });
-    } catch (error) {
-      console.log(error);
-      return res.error({
-        message: "Payment failed.",
-        status: 400
-      });
-    }
+  /* ================== RAZORPAY ================== */
+  // ✅ PetPooja is NOT called here anymore — it's called after payment success
+  try {
+    console.log("[CREATE_ORDER] Creating Razorpay order");
 
-    /* =============== Store in bongo delicacy database ===============*/
+    const razorpay = new Razorpay({
+      key_id: env.RAZORPAY_KEY_ID,
+      key_secret: env.RAZORPAY_KEY_SECRET,
+    });
 
-    const normalizedItems = orderItems.map(normalizeOrderItem);
+    const rpOrder = await razorpay.orders.create({
+      amount: Number(orderDetails.total) * 100,
+      currency: "INR",
+      receipt: `pp_${clientorderID}`,
+    });
+
+    console.log("[CREATE_ORDER] Razorpay order created:", rpOrder.id);
+
+    // Return orderinfo back to frontend so it can be sent in verifyPayment
+    return res.json({
+      success: true,
+      clientorderID,
+      razorpayOrder: rpOrder,
+      orderinfo, // ✅ frontend must send this back in verifyPayment body
+    });
+  } catch (err) {
+    console.error("[CREATE_ORDER] Razorpay creation failed:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Payment initiation failed",
+    });
+  }
+};
+
+/* -------------------------------------------------------
+   VERIFY PAYMENT + PLACE PETPOOJA ORDER + CREATE DB ORDER
+------------------------------------------------------- */
+const verifyPayment = async (req, res) => {
+  console.log("[VERIFY_PAYMENT] Incoming request");
+
+  const {
+    razorpay_payment_id,
+    razorpay_order_id,
+    razorpay_signature,
+    clientorderID,
+    orderData,
+    orderinfo, // ✅ same orderinfo from createOrder response — no changes to its structure
+  } = req.body;
+
+  /* ================== SIGNATURE CHECK ================== */
+  const body = `${razorpay_order_id}|${razorpay_payment_id}`;
+  const expected = crypto
+    .createHmac("sha256", env.RAZORPAY_KEY_SECRET)
+    .update(body)
+    .digest("hex");
+
+  if (expected !== razorpay_signature) {
+    console.error("[VERIFY_PAYMENT] Signature mismatch", {
+      expected,
+      received: razorpay_signature,
+    });
+
+    return res.status(400).json({ success: false });
+  }
+
+  console.log("[VERIFY_PAYMENT] Signature verified");
+
+  /* ================== PETPOOJA ================== */
+  // ✅ Called here after payment is confirmed — same data, no changes
+  try {
+    console.log("[VERIFY_PAYMENT] Placing order on PetPooja");
+    await placeOrderWithPetpuja(orderinfo);
+    console.log("[VERIFY_PAYMENT] PetPooja order placed successfully");
+  } catch (err) {
+    console.error("[VERIFY_PAYMENT] PetPooja order failed:", err);
+    return res.status(502).json({
+      success: false,
+      message: "PetPooja order failed after payment",
+    });
+  }
+
+  /* ================== DB INSERT ================== */
+  try {
+// ✅ FIXED - destructure restaurantName too
+const { brandId, restaurantName, userId, items, customer, deliveryAddress, pricing } = orderData;
+    const normalizedItems = items.map(normalizeOrderItem);
+
+    const pointsEarned = Math.floor(pricing.total_amount / 100);
+
     const orderRow = {
       id: clientorderID,
-      brand_id: restaurantDetails.restID,
+      brand_id: brandId,
       user_id: userId,
+      restaurant_name: restaurantName,
       items: normalizedItems,
-      customer: customerDetails,
-      description: orderDetails.description || "",
-      status: "PENDING",
+      customer,
+      delivery_address: deliveryAddress,
+
+      subtotal: pricing.subtotal,
+      discount_amount: pricing.flat_discount,
+      loyalty_discount: pricing.loyalty_discount,
+      gst_amount: pricing.gst_amount,
+      delivery_charge: pricing.delivery_charge,
+      total_amount: pricing.total_amount,
+
+      points_earned: pointsEarned,
+      status: "RECEIVED",
+      external_order_id: razorpay_order_id,
+      refund_id: razorpay_payment_id,
       created_at: new Date().toISOString(),
     };
 
@@ -160,226 +263,29 @@ const createOrder = async (req, res) => {
 
     if (error) {
       console.error("[VERIFY_PAYMENT] Supabase insert failed:", error);
-      return res.error({
-        message: `Oops! We’re having some technical trouble. If your payment went through, please give us a shout and we’ll make things right!`,
-        status: 400
-      });
-    }
-    /* ================== PETPOOJA ================== */
-    try {
-      // console.log("[CREATE_ORDER] Sending order to PetPooja");
-      // await placeOrderWithPetpuja(orderinfo);
-      // console.log("[CREATE_ORDER] PetPooja order placed");
-    } catch (err) {
-      console.error("[CREATE_ORDER] PetPooja order failed:", err);
-      return res.status(502).json({
-        success: false,
-        message: "Internal issue occured. Please contact resturent.",
-      });
-    }
-    return res.json({
-      success: true,
-      clientorderID,
-      razorpayOrder: razorPayResponse
-    });
-
-  } catch (error) {
-    return res.error({
-      message: "Internal server error.",
-      status: 500
-    });
-  }
-};
-
-/* -------------------------------------------------------
-   VERIFY PAYMENT + CREATE DB ORDER
-------------------------------------------------------- */
-/* -------------------------------------------------------
-   VERIFY PAYMENT + SEND ORDER TO PETPOOJA
-------------------------------------------------------- */
-const verifyPayment = async (req, res) => {
-  console.log("\n================ VERIFY PAYMENT START ================");
-
-  try {
-    const {
-      razorpay_payment_id,
-      razorpay_order_id,
-      razorpay_signature,
-      clientorderID,
-      orderData,
-    } = req.body;
-
-    /* ---------- SIGNATURE VERIFY ---------- */
-
-    const body = `${razorpay_order_id}|${razorpay_payment_id}`;
-
-    const expected = crypto
-      .createHmac("sha256", env.RAZORPAY_KEY_SECRET)
-      .update(body)
-      .digest("hex");
-
-    if (expected !== razorpay_signature) {
-      console.error("❌ Signature mismatch");
-      return res.status(400).json({
-        success: false,
-        message: "Invalid signature",
-      });
+      throw error;
     }
 
-    console.log("✅ Signature verified");
-
-    /* ---------- LOAD ORDER FROM DB ---------- */
-
-    const { data: savedOrder, error: fetchError } = await supabase
-      .from("orders")
-      .select("*")
-      .eq("id", clientorderID)
-      .single();
-
-    if (fetchError || !savedOrder) {
-      throw new Error("Order not found in DB");
-    }
-
-    console.log("✅ Order loaded from DB");
-
-    /* ---------- BUILD PETPOOJA PAYLOAD ---------- */
-
-    const { restaurantName, deliveryAddress, pricing } = orderData;
-
-    const orderinfo = {
-      OrderInfo: {
-        Restaurant: {
-          details: {
-            restID: savedOrder.brand_id,
-          },
-        },
-
-        Customer: {
-          details: savedOrder.customer,
-        },
-
-        Order: {
-          details: {
-            preorder_date: new Date().toISOString().slice(0, 10),
-            preorder_time: new Date()
-              .toTimeString()
-              .split(" ")[0],
-
-            service_charge: "0",
-            sc_tax_amount: "0",
-
-            delivery_charges: String(pricing.delivery_charge || 0),
-            dc_tax_percentage: "0",
-            dc_tax_amount: "0",
-            dc_gst_details: [],
-
-            packing_charges: "0",
-            pc_tax_amount: "0",
-            pc_tax_percentage: "0",
-            pc_gst_details: [],
-
-            order_type: "H",
-            advanced_order: "N",
-            urgent_order: false,
-            urgent_time: 0,
-
-            payment_type: "ONLINE",
-            table_no: "",
-            no_of_persons: "0",
-
-            discount_total: String(
-              (pricing.flat_discount || 0) +
-                (pricing.loyalty_discount || 0)
-            ),
-
-            discount_type:
-              pricing.flat_discount || pricing.loyalty_discount ? "F" : "",
-
-            tax_total: String(pricing.gst_amount || 0),
-            total: String(pricing.total_amount || 0),
-
-            created_on: new Date()
-              .toISOString()
-              .replace("T", " ")
-              .substring(0, 19),
-
-            enable_delivery: 1,
-            callback_url: `${env.BASE_URL}/petpuja/callback`,
-            collect_cash: "0",
-
-            /* ⭐ MOST IMPORTANT PART */
-            orderID: clientorderID,
-            clientorderID: clientorderID,
-            description: savedOrder.description || "",
-          },
-        },
-
-        OrderItem: {
-          details: savedOrder.items,
-        },
-      },
-
-      Tax: {
-        details: orderData.taxSummary || [],
-      },
-
-      udid: "",
-      device_type: "Web",
-    };
-
-    console.log("🚀 Sending order to PetPooja");
-
-    const petpujaResponse = await placeOrderWithPetpuja(orderinfo);
-
-    console.dir(petpujaResponse, { depth: null });
-
-    if (!petpujaResponse || petpujaResponse.success === false) {
-      throw new Error("PetPooja order failed");
-    }
-
-    console.log("✅ PetPooja success");
-
-    /* ---------- UPDATE ORDER IN DB ---------- */
-
-    const pointsEarned = Math.floor(pricing.total_amount / 100);
-
-    const updateRow = {
-      restaurant_name: restaurantName,
-      delivery_address: deliveryAddress,
-      subtotal: pricing.subtotal,
-      discount_amount: pricing.flat_discount,
-      loyalty_discount: pricing.loyalty_discount,
-      gst_amount: pricing.gst_amount,
-      delivery_charge: pricing.delivery_charge,
-      total_amount: pricing.total_amount,
-      points_earned: pointsEarned,
-      status: "RECEIVED",
-      external_order_id: razorpay_order_id,
-      refund_id: razorpay_payment_id,
-    };
-
-    const { error: updateError } = await supabase
-      .from("orders")
-      .update(updateRow)
-      .eq("id", clientorderID);
-
-    if (updateError) throw updateError;
-
-    console.log("✅ DB updated");
-    console.log("================ VERIFY PAYMENT SUCCESS ================\n");
+    console.log("[VERIFY_PAYMENT] Order saved successfully");
 
     return res.json({ success: true });
-
   } catch (err) {
-    console.error("❌ VERIFY PAYMENT FAILED");
-    console.error(err);
+    console.error("[VERIFY_PAYMENT] Order processing failed:", err);
 
-    return res.status(500).json({
-      success: false,
-      message: err.message || "Order sync failed",
-    });
+    try {
+      await cancelPetpujaOrder({
+        restID: orderData.brandId,
+        clientorderID,
+        cancelReason: "DB insert failed",
+      });
+    } catch (cancelErr) {
+      console.error("[VERIFY_PAYMENT] Failed to cancel PetPooja:", cancelErr);
+    }
+
+    return res.status(500).json({ success: false });
   }
 };
+
 /* -------------------------------------------------------
    CANCEL ON PAYMENT FAILURE
 ------------------------------------------------------- */
