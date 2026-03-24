@@ -3,11 +3,11 @@ const { itemStockWebhook } = require("../controllers/webhooks/stockWebhook.contr
 const petpoojaMenuController = require("../controllers/webhooks/petpoojaMenu.controller");
 
 const {
-  handlePetPoojaStoreWebhook,
+  handlePetPoojaStoreWebhook,getStoreStatus
 } = require("../controllers/webhooks/petpoojaStore.controller");
 
 router.post("/store-update", handlePetPoojaStoreWebhook);
-router.post("/store-status", handlePetPoojaStoreWebhook);
+router.post("/store-status", getStoreStatus);
 
 router.post("/push-menu", petpoojaMenuController.pushMenuWebhook);
 router.get("/cached-menu", petpoojaMenuController.getCachedMenu);
