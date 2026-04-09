@@ -15,5 +15,5 @@ router.use("/rider", require("./rider.routes.js"));
 router.use("/webhooks", require("./webhooks.routes.js"));
 router.use("/outlet-table", require("./outletTable.route.js"));
 router.use("/otp", require("./otp.routes.js"));
-
+router.use("/delivery-points", require("./deliveryPoints.routes"));
 module.exports = router;

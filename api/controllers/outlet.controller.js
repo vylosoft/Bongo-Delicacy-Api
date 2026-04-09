@@ -271,10 +271,94 @@ const getByLocation = async (req, res) => {
     return res.error({ message: "Internal server error", status: 500 });
   }
 };
+// ==========================
+// ✅ BRAND → BEST OUTLET BY LOCATION
+// ==========================
+const getBrandOutletByLocation = async (req, res) => {
+  try {
+    const { brand_id } = req.params;
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
+
+    const hasLocation = !isNaN(lat) && !isNaN(lng);
+
+    // 1. fetch outlets of that brand
+    const { data, error } = await supabase
+      .from("outlet")
+      .select("*")
+      .eq("brand_id", brand_id);
+
+    if (error) {
+      return res.error({
+        message: "Error fetching outlets",
+        status: 500
+      });
+    }
+
+    if (!data || data.length === 0) {
+      return res.success({ data: null });
+    }
+
+    let outlets = data;
+
+    // 2. attach distance
+    if (hasLocation) {
+      outlets = outlets.map((o) => ({
+        ...o,
+        distance_km:
+          o.lat != null && o.long != null
+            ? Number(getDistanceKm(lat, lng, o.lat, o.long).toFixed(2))
+            : null
+      }));
+
+      outlets.sort((a, b) => {
+        if (a.distance_km == null) return 1;
+        if (b.distance_km == null) return -1;
+        return a.distance_km - b.distance_km;
+      });
+    }
+
+    // 3. pick best outlet
+    const openOutlet = outlets.find((o) => o.is_active);
+    const selected = openOutlet || outlets[0];
+
+    return res.success({
+      data: {
+        brand_id: selected.brand_id,
+        brand_name: selected.brand_name,
+
+        outlet_id: selected.id,
+        petpooja_outlet_id: selected.petpooja_outlet_id,
+        resturent_id: selected.resturent_id,
+
+        lat: selected.lat,
+        long: selected.long,
+        address: selected.address,
+        city: selected.city,
+
+        logo: selected.logo,
+        hero_image: selected.hero_image,
+
+        is_open: selected.is_active,
+        distance_km: selected.distance_km || null,
+
+        all_closed: !openOutlet
+      }
+    });
+
+  } catch (error) {
+    console.log(error);
+    return res.error({
+      message: "Internal server error",
+      status: 500
+    });
+  }
+};
 module.exports = {
     getAll,
     getDetails,
     uploadOutletImage,
     update,
-    getByLocation
+    getByLocation,
+    getBrandOutletByLocation
 }
