@@ -1,19 +1,134 @@
 const axios = require("axios");
-const { FLASH_ACCESS_TOKEN, FLASH_STORE_ID, FLASH_BASE_URL } = require("../../config/env");
+const { FLASH_BASE_URL } = require("../../config/env");
+const supabase = require("../../config/db");
 
-if (!FLASH_ACCESS_TOKEN || !FLASH_STORE_ID) {
-  throw new Error("Missing FLASH_ACCESS_TOKEN or FLASH_STORE_ID in environment variables");
-}
+const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-// Create reusable axios instance
-const flashClient = axios.create({
-  baseURL: FLASH_BASE_URL,
-  timeout: 10000, // 10 seconds timeout
-  headers: {
-    "Content-Type": "application/json",
-    "access-token": FLASH_ACCESS_TOKEN,
-  },
+/**
+ * Normalize DB row
+ */
+const normalizePoint = (p) => ({
+  lat: parseFloat(p["Latitude"]),
+  lng: parseFloat(p["Longitude"]),
+  store_id: p["Store ID"],
+  access_token: p["Access Token"],
+  name: p["Outlet Name"]
 });
+
+/**
+ * Haversine fallback
+ */
+const getDistance = (lat1, lon1, lat2, lon2) => {
+  const toRad = (v) => (v * Math.PI) / 180;
+  const R = 6371;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) *
+    Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) ** 2;
+
+  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+};
+
+/**
+ * Get nearest delivery point (Google + fallback)
+ */
+const getNearestDeliveryPoint = async (restaurantLat, restaurantLng) => {
+  const { data, error } = await supabase
+    .from("delivery_points")
+    .select("data");
+
+  if (error) throw error;
+  if (!data.length) throw new Error("No delivery points found");
+
+  const points = data.map(row => normalizePoint(row.data));
+
+  try {
+    const destinations = points.map(p => `${p.lat},${p.lng}`).join("|");
+    const origin = `${restaurantLat},${restaurantLng}`;
+
+    const response = await axios.get(
+      "https://maps.googleapis.com/maps/api/distancematrix/json",
+      {
+        params: {
+          origins: origin,
+          destinations,
+          key: GOOGLE_API_KEY,
+        },
+      }
+    );
+
+    console.log("🌍 Google Status:", response.data.status);
+
+    if (!response.data.rows || !response.data.rows.length) {
+      throw new Error("Invalid Google response");
+    }
+
+    const elements = response.data.rows[0].elements;
+
+    let minDistance = Infinity;
+    let nearestPoint = null;
+
+    elements.forEach((el, index) => {
+      if (el.status === "OK") {
+        const distance = el.distance.value;
+
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearestPoint = points[index];
+        }
+      }
+    });
+
+    if (nearestPoint) {
+      console.log("✅ Google Selected:", nearestPoint.name);
+      return nearestPoint;
+    }
+
+    throw new Error("No valid Google result");
+
+  } catch (err) {
+    console.warn("⚠️ Google failed, using fallback:", err.message);
+
+    let minDistance = Infinity;
+    let nearestPoint = null;
+
+    points.forEach(point => {
+      const dist = getDistance(
+        restaurantLat,
+        restaurantLng,
+        point.lat,
+        point.lng
+      );
+
+      if (dist < minDistance) {
+        minDistance = dist;
+        nearestPoint = point;
+      }
+    });
+
+    console.log("🧭 Fallback Selected:", nearestPoint.name);
+    return nearestPoint;
+  }
+};
+
+/**
+ * Dynamic Flash Client
+ */
+const createFlashClient = (accessToken) => {
+  return axios.create({
+    baseURL: FLASH_BASE_URL,
+    timeout: 10000,
+    headers: {
+      "Content-Type": "application/json",
+      "access-token": accessToken,
+    },
+  });
+};
 
 /**
  * Validate coordinates
@@ -24,22 +139,30 @@ const isValidCoordinate = (value) => {
 };
 
 /**
- * Check serviceability for delivery
+ * Check serviceability
  */
 const checkServiceability = async (pickupLat, pickupLong, dropLat, dropLong) => {
   try {
-    // Input validation
+    console.log("📍 Pickup:", pickupLat, pickupLong);
+    console.log("📍 Drop:", dropLat, dropLong);
+
     if (
       !isValidCoordinate(pickupLat) ||
       !isValidCoordinate(pickupLong) ||
       !isValidCoordinate(dropLat) ||
       !isValidCoordinate(dropLong)
     ) {
-      throw new Error("Invalid latitude or longitude values");
+      throw new Error("Invalid coordinates");
     }
 
+    const point = await getNearestDeliveryPoint(pickupLat, pickupLong);
+
+    console.log("🏬 Store Used:", point.store_id);
+
+    const flashClient = createFlashClient(point.access_token);
+
     const payload = {
-      store_id: String(FLASH_STORE_ID),
+      store_id: String(point.store_id),
       pickupDetails: {
         latitude: String(pickupLat),
         longitude: String(pickupLong),
@@ -52,46 +175,48 @@ const checkServiceability = async (pickupLat, pickupLong, dropLat, dropLong) => 
 
     const { data } = await flashClient.post("/getServiceability", payload);
 
+    console.log("🚚 Flash Response:", data);
+
     return {
       success: true,
-      serviceable: data?.serviceability || null,
+      serviceable: data?.serviceability || false,
       payouts: data?.payouts || null,
-      raw: data, // optional, helpful for debugging
+      store_used: point.store_id,
     };
-  } catch (error) {
-    const errorData = error.response?.data || error.message;
 
-    console.error("Flash serviceability error:", {
-      message: error.message,
-      response: error.response?.data,
-      status: error.response?.status,
-    });
+  } catch (error) {
+    console.error("❌ Serviceability error:", error.message);
 
     return {
       success: false,
-      serviceable: false,
-      error: errorData,
+      error: error.message,
     };
   }
 };
 
-
 /**
- * Extract order details and create delivery task
- * This extracts all info from orderinfo object
+ * Create Delivery Task
  */
 const createDeliveryTaskFromOrder = async (data) => {
   try {
-    // Build payload for uEngage
+    const point = await getNearestDeliveryPoint(
+      parseFloat(data.resturent_lat),
+      parseFloat(data.resturent_lang)
+    );
+
+    console.log("🚀 Creating task for:", point.name);
+
     const payload = {
-      storeId:process.env.STORE_ID,
+      storeId: point.store_id,
+
       order_details: {
         order_total: data.subtotal,
-        paid: "true", // Will be updated after payment
+        paid: "true",
         vendor_order_id: data.id,
         order_source: "app",
         customer_orderId: data.id,
       },
+
       pickup_details: {
         name: data.resturent_name,
         contact_number: data.resturent_number,
@@ -100,6 +225,7 @@ const createDeliveryTaskFromOrder = async (data) => {
         address: data.resturent_address,
         city: data.resturent_city,
       },
+
       drop_details: {
         name: data.customer.name,
         contact_number: data.customer.phone,
@@ -108,19 +234,19 @@ const createDeliveryTaskFromOrder = async (data) => {
         address: data.delivery_address.fullAddress,
         city: data.delivery_address.landmark,
       },
+
       order_items: data.items.map(item => ({
-        id: item.id,                // or item.itemid if that’s your real ID
+        id: item.id,
         name: item.name || item.itemname,
         quantity: Number(item.quantity),
         price: Number(item.price)
       })),
-     authentication: {
+
+      authentication: {
         delivery_otp: data.otp,
         rto_otp: data.otp
       }
     };
-
-    console.log("Creating rider task with payload:", JSON.stringify(payload, null, 2));
 
     const response = await axios.post(
       `${process.env.RIDER_API_URL}/createTask`,
@@ -128,24 +254,28 @@ const createDeliveryTaskFromOrder = async (data) => {
       {
         headers: {
           "Content-Type": "application/json",
-          "access-token": process.env.ACCESS_TOKEN,
+          "access-token": point.access_token,
         },
       }
     );
-    console.log("Create task response:", response.data);
-    if(!response.data.status){
-       return {
-      success: false,
-      error: response.data.msg
-    };
+
+    console.log("📦 Rider Response:", response.data);
+
+    if (!response.data.status) {
+      return {
+        success: false,
+        error: response.data.msg,
+      };
     }
+
     return {
       success: true,
       data: response.data,
-
     };
+
   } catch (error) {
-    console.error("Create task failed:", error);
+    console.error("❌ Create task failed:", error.message);
+
     return {
       success: false,
       error: error.response?.data || error.message,
@@ -154,31 +284,32 @@ const createDeliveryTaskFromOrder = async (data) => {
 };
 
 /**
- * Track task status
+ * Track Task Status
  */
 const trackTaskStatus = async (taskId) => {
   try {
     const response = await axios.post(
-      `${RIDER_API_URL}/trackTaskStatus`,
+      `${process.env.RIDER_API_URL}/trackTaskStatus`,
       {
-        storeId: STORE_ID,
-        taskId: taskId,
+        storeId: process.env.STORE_ID,
+        taskId,
       },
       {
         headers: {
           "Content-Type": "application/json",
-          "access-token": ACCESS_TOKEN,
+          "access-token": process.env.ACCESS_TOKEN,
         },
       }
     );
 
     return {
       success: true,
-      message: response.data.message,
       data: response.data,
     };
+
   } catch (error) {
-    console.error("Track task failed:", error.response?.data || error.message);
+    console.error("❌ Track failed:", error.message);
+
     return {
       success: false,
       error: error.response?.data || error.message,
@@ -187,20 +318,20 @@ const trackTaskStatus = async (taskId) => {
 };
 
 /**
- * Cancel delivery task
+ * Cancel Task
  */
 const cancelDeliveryTask = async (taskId) => {
   try {
     const response = await axios.post(
-      `${RIDER_API_URL}/cancelTask`,
+      `${process.env.RIDER_API_URL}/cancelTask`,
       {
-        storeId: STORE_ID,
-        taskId: taskId,
+        storeId: process.env.STORE_ID,
+        taskId,
       },
       {
         headers: {
           "Content-Type": "application/json",
-          "access-token": ACCESS_TOKEN,
+          "access-token": process.env.ACCESS_TOKEN,
         },
       }
     );
@@ -209,8 +340,10 @@ const cancelDeliveryTask = async (taskId) => {
       success: true,
       message: response.data.message,
     };
+
   } catch (error) {
-    console.error("Cancel task failed:", error.response?.data || error.message);
+    console.error("❌ Cancel failed:", error.message);
+
     return {
       success: false,
       error: error.response?.data || error.message,

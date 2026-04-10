@@ -1,7 +1,7 @@
 const supabase = require("../../config/db");
 const axios = require("axios");
 
-const GOOGLE_API_KEY = "AIzaSyBvREqIdSDqMZm0K5NRKcORR3D6eDlzEHs";
+const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
 // ==========================
 // ✅ ADD BRAND

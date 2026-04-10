@@ -1,7 +1,7 @@
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const env = require("../../config/env.js");
-
+const { createDeliveryTaskFromOrder } = require("../helpers/riderHelper");
 const { saveOrderSchema } = require("../validations/order.validation.js");
 const {
   placeOrderWithPetpuja,
@@ -155,7 +155,7 @@ const createOrder = async (req, res) => {
     });
 
     const rpOrder = await razorpay.orders.create({
-      amount: Number(orderDetails.total) * 100,
+     amount: Math.round(Number(orderDetails.total) * 100),
       currency: "INR",
       receipt: `pp_${clientorderID}`,
     });
@@ -267,6 +267,64 @@ const { brandId, restaurantName, userId, items, customer, deliveryAddress, prici
     }
 
     console.log("[VERIFY_PAYMENT] Order saved successfully");
+
+
+
+setTimeout(async () => {
+  try {
+    console.log("🚀 Auto booking rider...");
+
+    const { data: order } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("id", clientorderID)
+      .single();
+
+    if (!order) {
+      console.log("❌ Order not found");
+      return;
+    }
+
+    if (order.delivery_info?.taskId) {
+      console.log("⚠️ Rider already booked");
+      return;
+    }
+
+    const otp = crypto.randomInt(1000, 10000).toString();
+
+    const riderResp = await createDeliveryTaskFromOrder({
+      ...order,
+      otp,
+      resturent_lat: order.delivery_address.coordinates.lat,
+      resturent_lang: order.delivery_address.coordinates.lng,
+      resturent_name: order.restaurant_name,
+      resturent_number: order.customer.phone,
+      resturent_address: order.delivery_address.fullAddress,
+      resturent_city: order.delivery_address.landmark || "city",
+    });
+
+    if (!riderResp.success) {
+      console.log("❌ Rider booking failed:", riderResp.error);
+      return;
+    }
+
+    await supabase
+      .from("orders")
+      .update({
+        delivery_info: {
+          taskId: riderResp.data.taskId,
+          status_code: riderResp.data.Status_code,
+          otp,
+        },
+      })
+      .eq("id", order.id);
+
+    console.log("✅ Rider booked:", riderResp.data.taskId);
+
+  } catch (err) {
+    console.error("🔥 Rider error:", err.message);
+  }
+}, 5000);
 
     return res.json({ success: true });
   } catch (err) {

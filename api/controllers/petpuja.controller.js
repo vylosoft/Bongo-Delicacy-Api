@@ -3,16 +3,19 @@ const Razorpay = require("razorpay");
 const env = require("../../config/env.js");
 const supabase = require("../../config/db");
 
+// 🔥 ADD THIS
+const { cancelDeliveryTask } = require("../helpers/riderHelper");
+
 exports.updateOrderStatus = async (req, res) => {
   try {
     console.log("PetPuja Callback Received:", req.body);
 
     const statusIndicator = parseInt(req.body.status);
-    const orderId = req.body.orderID;   // this is your clientorderID
+    const orderId = req.body.orderID;
     const restID = req.body.restID;
 
     /* ---------------------------------------------------
-       1️⃣ FETCH ORDER FROM DB FIRST (needed for refund + validation)
+       1️⃣ FETCH ORDER FROM DB
     --------------------------------------------------- */
     const { data: order, error: fetchError } = await supabase
       .from("orders")
@@ -26,14 +29,13 @@ exports.updateOrderStatus = async (req, res) => {
     }
 
     /* ---------------------------------------------------
-       2️⃣ IF STATUS -1 → FULL REFUND THEN CANCEL
+       2️⃣ IF STATUS -1 → CANCEL + REFUND + RIDER CANCEL
     --------------------------------------------------- */
     if (statusIndicator === -1) {
-      console.log(`[CALLBACK] Status -1 received for order ${orderId} — initiating full refund`);
+      console.log(`[CALLBACK] Status -1 received for order ${orderId}`);
 
-      // Guard: already cancelled/refunded
+      // already cancelled
       if (order.status === "CANCELLED") {
-        console.warn("[CALLBACK] Order already cancelled, skipping");
         return res.status(200).json({
           success: "1",
           message: "Order already cancelled",
@@ -43,18 +45,28 @@ exports.updateOrderStatus = async (req, res) => {
         });
       }
 
-      if (order.refund_status === "completed") {
-        console.warn("[CALLBACK] Refund already completed, skipping");
-        return res.status(200).json({
-          success: "1",
-          message: "Refund already completed",
-          restID,
-          orderID: orderId,
-          status: "-1",
-        });
+      // 🔥 STEP 1 — CANCEL RIDER
+      try {
+        const taskId = order?.delivery_info?.taskId;
+
+        if (taskId) {
+          console.log("🚨 Cancelling rider task:", taskId);
+
+          const cancelResp = await cancelDeliveryTask(taskId);
+
+          if (!cancelResp.success) {
+            console.error("❌ Rider cancel failed:", cancelResp.error);
+          } else {
+            console.log("✅ Rider cancelled successfully");
+          }
+        } else {
+          console.log("⚠️ No rider assigned, skipping cancel");
+        }
+      } catch (err) {
+        console.error("🔥 Rider cancel error:", err.message);
       }
 
-      /* ── RAZORPAY FULL REFUND ── */
+      // 🔥 STEP 2 — REFUND
       let razorpayRefundId = null;
 
       if (order.refund_id) {
@@ -64,31 +76,24 @@ exports.updateOrderStatus = async (req, res) => {
             key_secret: env.RAZORPAY_KEY_SECRET,
           });
 
-          // total_amount is stored in ₹, Razorpay needs paise
           const refundAmountPaise = Math.round(Number(order.total_amount) * 100);
-
-          console.log(`[CALLBACK] Refunding ₹${order.total_amount} (${refundAmountPaise} paise) for payment ${order.refund_id}`);
 
           const refund = await razorpay.payments.refund(order.refund_id, {
             amount: refundAmountPaise,
             notes: {
               reason: req.body.cancel_reason || "Cancelled by restaurant",
               clientorderID: orderId,
-              type: "petpuja_cancel_refund",
             },
           });
 
           razorpayRefundId = refund.id;
-          console.log(`[CALLBACK] Razorpay refund successful: ${razorpayRefundId}`);
+          console.log("✅ Refund success:", razorpayRefundId);
         } catch (err) {
-          console.error("[CALLBACK] Razorpay refund failed:", err);
-          // Still update order as cancelled even if refund fails — log it
+          console.error("❌ Refund failed:", err);
         }
-      } else {
-        console.warn("[CALLBACK] No refund_id found on order — skipping Razorpay refund");
       }
 
-      /* ── UPDATE DB ── */
+      // 🔥 STEP 3 — UPDATE DB
       const { error: updateError } = await supabase
         .from("orders")
         .update({
@@ -96,19 +101,25 @@ exports.updateOrderStatus = async (req, res) => {
           refund_status: razorpayRefundId ? "completed" : "failed",
           refund_amount: order.total_amount,
           refunded_at: razorpayRefundId ? new Date().toISOString() : null,
+
+          // 👇 ADD THIS
+          delivery_info: {
+            ...order.delivery_info,
+            rider_status: "CANCELLED",
+          },
         })
         .eq("id", orderId);
 
       if (updateError) {
-        console.error("[CALLBACK] DB update failed:", updateError);
-        return res.status(500).json({ success: "0", message: "Failed to update order" });
+        console.error("❌ DB update failed:", updateError);
+        return res.status(500).json({ success: "0" });
       }
 
-      console.log(`[CALLBACK] Order ${orderId} cancelled and refund processed`);
+      console.log(`✅ Order ${orderId} cancelled fully`);
 
       return res.status(200).json({
         success: "1",
-        message: "Order cancelled and refund initiated",
+        message: "Order cancelled",
         restID,
         orderID: orderId,
         status: "-1",
@@ -116,12 +127,10 @@ exports.updateOrderStatus = async (req, res) => {
     }
 
     /* ---------------------------------------------------
-       3️⃣ ALL OTHER STATUSES → normal status update
+       3️⃣ NORMAL STATUS UPDATE
     --------------------------------------------------- */
     const statusMap = orderStatusConfig();
     const orderStatus = statusMap.get(statusIndicator);
-
-    console.log("Mapped Order Status:", orderStatus);
 
     const { error: updateError } = await supabase
       .from("orders")
@@ -138,7 +147,7 @@ exports.updateOrderStatus = async (req, res) => {
 
     return res.status(200).json({
       success: "1",
-      message: "Order status updated successfully.",
+      message: "Order status updated",
       restID,
       orderID: orderId,
       status: String(statusIndicator),
