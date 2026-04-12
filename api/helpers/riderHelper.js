@@ -4,6 +4,10 @@ const supabase = require("../../config/db");
 
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
+// 🔒 TEMP STATIC CONFIG (DO NOT REMOVE)
+const STATIC_STORE_ID = "89";
+const STATIC_ACCESS_TOKEN = "grdgedhs";
+
 /**
  * Normalize DB row
  */
@@ -12,7 +16,7 @@ const normalizePoint = (p) => ({
   lng: parseFloat(p["Longitude"]),
   store_id: p["Store ID"],
   access_token: p["Access Token"],
-  name: p["Outlet Name"]
+  name: p["Outlet Name"],
 });
 
 /**
@@ -27,9 +31,7 @@ const getDistance = (lat1, lon1, lat2, lon2) => {
 
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) *
-    Math.cos(toRad(lat2)) *
-    Math.sin(dLon / 2) ** 2;
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
 
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 };
@@ -38,17 +40,15 @@ const getDistance = (lat1, lon1, lat2, lon2) => {
  * Get nearest delivery point (Google + fallback)
  */
 const getNearestDeliveryPoint = async (restaurantLat, restaurantLng) => {
-  const { data, error } = await supabase
-    .from("delivery_points")
-    .select("data");
+  const { data, error } = await supabase.from("delivery_points").select("data");
 
   if (error) throw error;
   if (!data.length) throw new Error("No delivery points found");
 
-  const points = data.map(row => normalizePoint(row.data));
+  const points = data.map((row) => normalizePoint(row.data));
 
   try {
-    const destinations = points.map(p => `${p.lat},${p.lng}`).join("|");
+    const destinations = points.map((p) => `${p.lat},${p.lng}`).join("|");
     const origin = `${restaurantLat},${restaurantLng}`;
 
     const response = await axios.get(
@@ -59,10 +59,8 @@ const getNearestDeliveryPoint = async (restaurantLat, restaurantLng) => {
           destinations,
           key: GOOGLE_API_KEY,
         },
-      }
+      },
     );
-
-    console.log("🌍 Google Status:", response.data.status);
 
     if (!response.data.rows || !response.data.rows.length) {
       throw new Error("Invalid Google response");
@@ -84,25 +82,19 @@ const getNearestDeliveryPoint = async (restaurantLat, restaurantLng) => {
       }
     });
 
-    if (nearestPoint) {
-      console.log("✅ Google Selected:", nearestPoint.name);
-      return nearestPoint;
-    }
+    if (nearestPoint) return nearestPoint;
 
     throw new Error("No valid Google result");
-
   } catch (err) {
-    console.warn("⚠️ Google failed, using fallback:", err.message);
-
     let minDistance = Infinity;
     let nearestPoint = null;
 
-    points.forEach(point => {
+    points.forEach((point) => {
       const dist = getDistance(
         restaurantLat,
         restaurantLng,
         point.lat,
-        point.lng
+        point.lng,
       );
 
       if (dist < minDistance) {
@@ -111,7 +103,6 @@ const getNearestDeliveryPoint = async (restaurantLat, restaurantLng) => {
       }
     });
 
-    console.log("🧭 Fallback Selected:", nearestPoint.name);
     return nearestPoint;
   }
 };
@@ -141,11 +132,13 @@ const isValidCoordinate = (value) => {
 /**
  * Check serviceability
  */
-const checkServiceability = async (pickupLat, pickupLong, dropLat, dropLong) => {
+const checkServiceability = async (
+  pickupLat,
+  pickupLong,
+  dropLat,
+  dropLong,
+) => {
   try {
-    console.log("📍 Pickup:", pickupLat, pickupLong);
-    console.log("📍 Drop:", dropLat, dropLong);
-
     if (
       !isValidCoordinate(pickupLat) ||
       !isValidCoordinate(pickupLong) ||
@@ -155,14 +148,13 @@ const checkServiceability = async (pickupLat, pickupLong, dropLat, dropLong) => 
       throw new Error("Invalid coordinates");
     }
 
-    const point = await getNearestDeliveryPoint(pickupLat, pickupLong);
+    // 🔒 TEMP STATIC USAGE (COMMENT ONLY, DO NOT REMOVE DYNAMIC)
+    // const point = await getNearestDeliveryPoint(pickupLat, pickupLong);
 
-    console.log("🏬 Store Used:", point.store_id);
-
-    const flashClient = createFlashClient(point.access_token);
+    const flashClient = createFlashClient(STATIC_ACCESS_TOKEN);
 
     const payload = {
-      store_id: String(point.store_id),
+      store_id: String(STATIC_STORE_ID),
       pickupDetails: {
         latitude: String(pickupLat),
         longitude: String(pickupLong),
@@ -175,18 +167,13 @@ const checkServiceability = async (pickupLat, pickupLong, dropLat, dropLong) => 
 
     const { data } = await flashClient.post("/getServiceability", payload);
 
-    console.log("🚚 Flash Response:", data);
-
     return {
       success: true,
       serviceable: data?.serviceability || false,
       payouts: data?.payouts || null,
-      store_used: point.store_id,
+      store_used: STATIC_STORE_ID,
     };
-
   } catch (error) {
-    console.error("❌ Serviceability error:", error.message);
-
     return {
       success: false,
       error: error.message,
@@ -199,15 +186,11 @@ const checkServiceability = async (pickupLat, pickupLong, dropLat, dropLong) => 
  */
 const createDeliveryTaskFromOrder = async (data) => {
   try {
-    const point = await getNearestDeliveryPoint(
-      parseFloat(data.resturent_lat),
-      parseFloat(data.resturent_lang)
-    );
-
-    console.log("🚀 Creating task for:", point.name);
+    // 🔒 TEMP STATIC USAGE (COMMENT ONLY, DO NOT REMOVE DYNAMIC)
+    // const point = await getNearestDeliveryPoint(...);
 
     const payload = {
-      storeId: point.store_id,
+      storeId: STATIC_STORE_ID,
 
       order_details: {
         order_total: data.subtotal,
@@ -218,12 +201,12 @@ const createDeliveryTaskFromOrder = async (data) => {
       },
 
       pickup_details: {
-        name: data.resturent_name,
-        contact_number: data.resturent_number,
-        latitude: parseFloat(data.resturent_lat),
-        longitude: parseFloat(data.resturent_lang),
-        address: data.resturent_address,
-        city: data.resturent_city,
+        name: data.pickup_details?.name ?? "",
+        contact_number: data.pickup_details?.contact_number ?? "",
+        latitude: parseFloat(data.pickup_details?.latitude ?? 0),
+        longitude: parseFloat(data.pickup_details?.longitude ?? 0),
+        address: data.pickup_details?.address ?? "",
+        city: data.pickup_details?.city ?? "Bangalore",
       },
 
       drop_details: {
@@ -235,31 +218,39 @@ const createDeliveryTaskFromOrder = async (data) => {
         city: data.delivery_address.landmark,
       },
 
-      order_items: data.items.map(item => ({
+      order_items: data.items.map((item) => ({
         id: item.id,
         name: item.name || item.itemname,
         quantity: Number(item.quantity),
-        price: Number(item.price)
+        price: Number(item.price),
       })),
 
       authentication: {
         delivery_otp: data.otp,
-        rto_otp: data.otp
-      }
+        rto_otp: data.otp,
+      },
     };
 
-    const response = await axios.post(
-      `${process.env.RIDER_API_URL}/createTask`,
-      payload,
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "access-token": point.access_token,
-        },
-      }
-    );
+   const baseUrl = process.env.FLASH_BASE_URL;
+   const url = `${baseUrl}/createTask`;
 
-    console.log("📦 Rider Response:", response.data);
+   console.log("🚨 RIDER BASE URL:", baseUrl);
+   console.log("🚨 FULL RIDER URL:", url);
+
+   if (!baseUrl) {
+     throw new Error("RIDER_API_URL is undefined");
+   }
+
+   if (!baseUrl.startsWith("http")) {
+     throw new Error("RIDER_API_URL must start with http/https");
+   }
+
+   const response = await axios.post(url, payload, {
+     headers: {
+       "Content-Type": "application/json",
+       "access-token": STATIC_ACCESS_TOKEN,
+     },
+   });
 
     if (!response.data.status) {
       return {
@@ -272,10 +263,7 @@ const createDeliveryTaskFromOrder = async (data) => {
       success: true,
       data: response.data,
     };
-
   } catch (error) {
-    console.error("❌ Create task failed:", error.message);
-
     return {
       success: false,
       error: error.response?.data || error.message,
@@ -289,27 +277,24 @@ const createDeliveryTaskFromOrder = async (data) => {
 const trackTaskStatus = async (taskId) => {
   try {
     const response = await axios.post(
-      `${process.env.RIDER_API_URL}/trackTaskStatus`,
+      `${process.env.FLASH_BASE_URL}/trackTaskStatus`,
       {
-        storeId: process.env.STORE_ID,
+        storeId: STATIC_STORE_ID,
         taskId,
       },
       {
         headers: {
           "Content-Type": "application/json",
-          "access-token": process.env.ACCESS_TOKEN,
+          "access-token": STATIC_ACCESS_TOKEN,
         },
-      }
+      },
     );
 
     return {
       success: true,
       data: response.data,
     };
-
   } catch (error) {
-    console.error("❌ Track failed:", error.message);
-
     return {
       success: false,
       error: error.response?.data || error.message,
@@ -323,37 +308,82 @@ const trackTaskStatus = async (taskId) => {
 const cancelDeliveryTask = async (taskId) => {
   try {
     const response = await axios.post(
-      `${process.env.RIDER_API_URL}/cancelTask`,
+      `${process.env.FLASH_BASE_URL}/cancelTask`,
       {
-        storeId: process.env.STORE_ID,
+        storeId: STATIC_STORE_ID,
         taskId,
       },
       {
         headers: {
           "Content-Type": "application/json",
-          "access-token": process.env.ACCESS_TOKEN,
+          "access-token": STATIC_ACCESS_TOKEN,
         },
-      }
+      },
     );
 
     return {
       success: true,
       message: response.data.message,
     };
-
   } catch (error) {
-    console.error("❌ Cancel failed:", error.message);
-
     return {
       success: false,
       error: error.response?.data || error.message,
     };
   }
 };
+const trackAndSaveTaskStatus = async (taskId, orderId) => {
+  try {
+    const baseUrl = process.env.FLASH_BASE_URL.replace(/\/$/, "");
+    const response = await axios.post(
+      `${baseUrl}/trackTaskStatus`,
+      {
+        storeId: STATIC_STORE_ID,
+        taskId,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "access-token": STATIC_ACCESS_TOKEN,
+        },
+      },
+    );
 
+    const riderData = response.data?.data;
+    if (!riderData) return;
+
+    const { data: order } = await supabase
+      .from("orders")
+      .select("delivery_info")
+      .eq("id", orderId)
+      .maybeSingle();
+
+    const updatedDeliveryInfo = {
+      ...order?.delivery_info,
+      taskId: riderData.taskId,
+      rider_name: riderData.rider_name,
+      rider_contact: riderData.rider_contact,
+      latitude: riderData.latitude,
+      longitude: riderData.longitude,
+      tracking_url: riderData.tracking_url,
+      status_code: response.data?.status_code,
+      lastSyncTime: riderData.lastSyncTime,
+    };
+
+    await supabase
+      .from("orders")
+      .update({ delivery_info: updatedDeliveryInfo })
+      .eq("id", orderId);
+
+    console.log("✅ Rider tracking info saved for order:", orderId);
+  } catch (err) {
+    console.error("❌ trackAndSaveTaskStatus failed:", err.message);
+  }
+};
 module.exports = {
   checkServiceability,
   createDeliveryTaskFromOrder,
   trackTaskStatus,
   cancelDeliveryTask,
+  trackAndSaveTaskStatus,
 };

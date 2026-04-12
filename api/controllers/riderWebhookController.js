@@ -1,6 +1,5 @@
 const supabase = require("../../config/db");
 
-// 🔥 IMPORTS
 const {
   cancelPetpujaOrder,
   sendRiderDetailsToPetPuja,
@@ -54,7 +53,6 @@ const riderWebhookController = async (req, res) => {
 
     if (!orderData) {
       console.log("⚠️ No order found for taskId:", taskId);
-
       return res.status(200).json({
         status: true,
         message: "No matching order found",
@@ -62,7 +60,7 @@ const riderWebhookController = async (req, res) => {
     }
 
     /**
-     * 🔄 Update delivery_info
+     * 🔄 Build updated delivery_info
      */
     const updatedDeliveryInfo = {
       ...orderData.delivery_info,
@@ -75,11 +73,12 @@ const riderWebhookController = async (req, res) => {
       status_code: status_code,
     };
 
+    /**
+     * 🔄 Update delivery_info
+     */
     const { error: updateError } = await supabase
       .from("orders")
-      .update({
-        delivery_info: updatedDeliveryInfo,
-      })
+      .update({ delivery_info: updatedDeliveryInfo })
       .eq("id", orderData.id);
 
     if (updateError) {
@@ -89,7 +88,7 @@ const riderWebhookController = async (req, res) => {
     }
 
     /**
-     * 🔥 SEND RIDER STATUS TO PETPOOJA (NEW)
+     * 🔥 SEND RIDER STATUS TO PETPOOJA
      */
     await sendRiderDetailsToPetPuja({
       status_code,
@@ -101,13 +100,8 @@ const riderWebhookController = async (req, res) => {
      */
     let updatedOrderStatus = null;
 
-    if (status_code === "DISPATCHED") {
-      updatedOrderStatus = "DISPATCHED";
-    }
-
-    if (status_code === "DELIVERED") {
-      updatedOrderStatus = "DELIVERED";
-    }
+    if (status_code === "DISPATCHED") updatedOrderStatus = "DISPATCHED";
+    if (status_code === "DELIVERED") updatedOrderStatus = "DELIVERED";
 
     if (updatedOrderStatus) {
       await supabase
@@ -119,7 +113,7 @@ const riderWebhookController = async (req, res) => {
     }
 
     /**
-     * 🔥 RIDER CANCEL → CANCEL PETPOOJA
+     * 🔥 RIDER CANCEL → CANCEL PETPOOJA + UPDATE ORDER
      */
     if (status_code === "CANCELLED") {
       try {
@@ -132,10 +126,22 @@ const riderWebhookController = async (req, res) => {
         });
 
         console.log("✅ PetPooja cancelled due to rider");
-
       } catch (err) {
         console.error("❌ PetPooja cancel failed:", err.message);
       }
+
+      await supabase
+        .from("orders")
+        .update({
+          status: "CANCELLED",
+          delivery_info: {
+            ...updatedDeliveryInfo,
+            rider_cancelled: true,
+          },
+        })
+        .eq("id", orderData.id);
+
+      console.log("📦 Order marked CANCELLED due to rider cancellation");
     }
 
     /**
@@ -145,10 +151,8 @@ const riderWebhookController = async (req, res) => {
       status: true,
       message: "Webhook Processed",
     });
-
   } catch (error) {
     console.error("🔥 Webhook Error:", error);
-
     return res.status(500).json({
       error: "Internal Server Error",
     });

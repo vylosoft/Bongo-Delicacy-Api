@@ -1,7 +1,8 @@
-const Razorpay = require("razorpay")
+const Razorpay = require("razorpay");
 
-const { cancelPetpujaOrder } = require("../helpers/petpujaHelper")
-const env = require("../../config/env.js")
+const { cancelPetpujaOrder } = require("../helpers/petpujaHelper");
+const { cancelDeliveryTask } = require("../helpers/riderHelper");
+const env = require("../../config/env.js");
 
 const supabase = require("../../config/db");
 const cancelOrder = async (req, res) => {
@@ -61,9 +62,7 @@ const cancelOrder = async (req, res) => {
     /* ---------------------------------------------------
        3️⃣ REFUND SAFETY CHECK
     --------------------------------------------------- */
-    const capturedAmountPaise = Math.round(
-      Number(order.total_amount) * 100
-    );
+    const capturedAmountPaise = Math.round(Number(order.total_amount) * 100);
 
     if (refundAmount > capturedAmountPaise) {
       return res.status(400).json({
@@ -115,20 +114,43 @@ const cancelOrder = async (req, res) => {
     } catch (err) {
       console.warn("PetPuja cancel failed:", err.message);
     }
+
+    /* ---------------------------------------------------
+       5.5️⃣ RIDER CANCEL (BEST-EFFORT)
+    --------------------------------------------------- */
+    try {
+      const taskId = order?.delivery_info?.taskId;
+      if (taskId) {
+        const cancelResp = await cancelDeliveryTask(taskId);
+        if (cancelResp.success) {
+          console.log("✅ Rider cancelled:", taskId);
+        } else {
+          console.warn("⚠️ Rider cancel failed:", cancelResp.error);
+        }
+      } else {
+        console.log("⚠️ No rider task found, skipping cancel");
+      }
+    } catch (err) {
+      console.warn("Rider cancel error:", err.message);
+    }
+
     const refundedAt = razorpayRefundId ? new Date().toISOString() : null;
+
     /* ---------------------------------------------------
        6️⃣ UPDATE ORDER (CLEAN + HONEST)
     --------------------------------------------------- */
     const { data: updatedOrder, error: updateError } = await supabase
       .from("orders")
-
       .update({
         status: "CANCELLED",
         refund_status: razorpayRefundId ? "completed" : null,
         refund_amount: refundAmount,
         refunded_at: refundedAt,
+        delivery_info: {
+          ...order.delivery_info,
+          rider_status: "CANCELLED",
+        },
       })
-
       .eq("id", clientorderID)
       .select()
       .single();

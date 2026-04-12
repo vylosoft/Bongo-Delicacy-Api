@@ -14,8 +14,10 @@ const fetchUserPreferences = async (userId) => {
       .from("profiles")
       .select("dietary_preferences")
       .eq("id", userId)
-      .single();
-
+      .maybeSingle();
+if (error) {
+  console.log(error);
+}
     if (error || !profile?.dietary_preferences) {
       console.log("[USER_PREFS] No preferences found");
       return defaultPrefs;
