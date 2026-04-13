@@ -1,5 +1,6 @@
 const axios = require("axios");
 const env = require("../../config/env");
+const supabase = require("../../config/db");
 const { riderStatusConfig } = require("../../config/constant");
 
 // axios instance for PetPooja
@@ -56,11 +57,7 @@ const cancelPetpujaOrder = async ({
   };
 
   try {
-    const { data } = await petpujaClient.post(
-      "/update_order_status",
-      payload
-    );
-
+    const { data } = await petpujaClient.post("/update_order_status", payload);
     return data;
   } catch (error) {
     const errData = error.response?.data || error.message;
@@ -74,7 +71,30 @@ const cancelPetpujaOrder = async ({
 };
 
 /**
- * 🔥 SEND RIDER STATUS TO PETPOOJA (UPDATED)
+ * Get brand_id (outlet_id) from orders table by order ID
+ */
+const getOutletIdFromOrder = async (orderId) => {
+  const { data, error } = await supabase
+    .from("orders")
+    .select("brand_id")
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("❌ Failed to fetch brand_id for order:", orderId, error.message);
+    return null;
+  }
+
+  if (!data?.brand_id) {
+    console.error("❌ No brand_id found for order:", orderId);
+    return null;
+  }
+
+  return data.brand_id;
+};
+
+/**
+ * Send Rider Status to PetPooja (Dynamic outlet_id from order's brand_id)
  */
 const sendRiderDetailsToPetPuja = async (riderInfo) => {
   try {
@@ -85,12 +105,19 @@ const sendRiderDetailsToPetPuja = async (riderInfo) => {
       return { success: false };
     }
 
+    const outletId = await getOutletIdFromOrder(riderInfo.data.orderId);
+
+    if (!outletId) {
+      console.error("❌ Could not resolve outlet_id for order:", riderInfo.data.orderId);
+      return { success: false };
+    }
+
     const payload = {
       app_key: process.env.APP_KEY,
       app_secret: process.env.APP_SECRET,
       access_token: process.env.ACCESS_TOKEN,
       order_id: riderInfo.data.orderId,
-      outlet_id: "89",
+      outlet_id: String(outletId),
       status: status,
       rider_data: {
         rider_name: riderInfo.data.rider_name,
@@ -101,16 +128,12 @@ const sendRiderDetailsToPetPuja = async (riderInfo) => {
 
     console.log("📤 Sending rider update to PetPooja:", payload);
 
-    const { data } = await axios.post(
-      "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/rider_status_update",
-      payload
-    );
+    const { data } = await petpujaClient.post("/rider_status_update", payload);
 
     return {
       success: true,
       data,
     };
-
   } catch (error) {
     console.error("❌ PetPooja rider update failed:", error.message);
 
@@ -121,7 +144,7 @@ const sendRiderDetailsToPetPuja = async (riderInfo) => {
 };
 
 /**
- * 🔥 STATUS MAPPING
+ * Status Mapping
  */
 const riderStatusPetpujaStatusMapping = (riderStatus) => {
   const riderStatusConst = riderStatusConfig();

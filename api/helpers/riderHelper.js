@@ -4,10 +4,6 @@ const supabase = require("../../config/db");
 
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-// 🔒 TEMP STATIC CONFIG (DO NOT REMOVE)
-const STATIC_STORE_ID = "89";
-const STATIC_ACCESS_TOKEN = "grdgedhs";
-
 /**
  * Normalize DB row
  */
@@ -59,8 +55,10 @@ const getNearestDeliveryPoint = async (restaurantLat, restaurantLng) => {
           destinations,
           key: GOOGLE_API_KEY,
         },
-      },
+      }
     );
+
+    console.log("🌍 Google Status:", response.data.status);
 
     if (!response.data.rows || !response.data.rows.length) {
       throw new Error("Invalid Google response");
@@ -74,7 +72,6 @@ const getNearestDeliveryPoint = async (restaurantLat, restaurantLng) => {
     elements.forEach((el, index) => {
       if (el.status === "OK") {
         const distance = el.distance.value;
-
         if (distance < minDistance) {
           minDistance = distance;
           nearestPoint = points[index];
@@ -82,10 +79,15 @@ const getNearestDeliveryPoint = async (restaurantLat, restaurantLng) => {
       }
     });
 
-    if (nearestPoint) return nearestPoint;
+    if (nearestPoint) {
+      console.log("✅ Google Selected:", nearestPoint.name);
+      return nearestPoint;
+    }
 
     throw new Error("No valid Google result");
   } catch (err) {
+    console.warn("⚠️ Google failed, using fallback:", err.message);
+
     let minDistance = Infinity;
     let nearestPoint = null;
 
@@ -94,7 +96,7 @@ const getNearestDeliveryPoint = async (restaurantLat, restaurantLng) => {
         restaurantLat,
         restaurantLng,
         point.lat,
-        point.lng,
+        point.lng
       );
 
       if (dist < minDistance) {
@@ -103,6 +105,7 @@ const getNearestDeliveryPoint = async (restaurantLat, restaurantLng) => {
       }
     });
 
+    console.log("🧭 Fallback Selected:", nearestPoint.name);
     return nearestPoint;
   }
 };
@@ -132,13 +135,11 @@ const isValidCoordinate = (value) => {
 /**
  * Check serviceability
  */
-const checkServiceability = async (
-  pickupLat,
-  pickupLong,
-  dropLat,
-  dropLong,
-) => {
+const checkServiceability = async (pickupLat, pickupLong, dropLat, dropLong) => {
   try {
+    console.log("📍 Pickup:", pickupLat, pickupLong);
+    console.log("📍 Drop:", dropLat, dropLong);
+
     if (
       !isValidCoordinate(pickupLat) ||
       !isValidCoordinate(pickupLong) ||
@@ -148,13 +149,14 @@ const checkServiceability = async (
       throw new Error("Invalid coordinates");
     }
 
-    // 🔒 TEMP STATIC USAGE (COMMENT ONLY, DO NOT REMOVE DYNAMIC)
-    // const point = await getNearestDeliveryPoint(pickupLat, pickupLong);
+    const point = await getNearestDeliveryPoint(pickupLat, pickupLong);
 
-    const flashClient = createFlashClient(STATIC_ACCESS_TOKEN);
+    console.log("🏬 Store Used:", point.store_id);
+
+    const flashClient = createFlashClient(point.access_token);
 
     const payload = {
-      store_id: String(STATIC_STORE_ID),
+      store_id: String(point.store_id),
       pickupDetails: {
         latitude: String(pickupLat),
         longitude: String(pickupLong),
@@ -167,13 +169,17 @@ const checkServiceability = async (
 
     const { data } = await flashClient.post("/getServiceability", payload);
 
+    console.log("🚚 Flash Response:", data);
+
     return {
       success: true,
       serviceable: data?.serviceability || false,
       payouts: data?.payouts || null,
-      store_used: STATIC_STORE_ID,
+      store_used: point.store_id,
     };
   } catch (error) {
+    console.error("❌ Serviceability error:", error.message);
+
     return {
       success: false,
       error: error.message,
@@ -186,11 +192,15 @@ const checkServiceability = async (
  */
 const createDeliveryTaskFromOrder = async (data) => {
   try {
-    // 🔒 TEMP STATIC USAGE (COMMENT ONLY, DO NOT REMOVE DYNAMIC)
-    // const point = await getNearestDeliveryPoint(...);
+    const point = await getNearestDeliveryPoint(
+      parseFloat(data.pickup_details?.latitude ?? 0),
+      parseFloat(data.pickup_details?.longitude ?? 0)
+    );
+
+    console.log("🚀 Creating task for:", point.name);
 
     const payload = {
-      storeId: STATIC_STORE_ID,
+      storeId: point.store_id,
 
       order_details: {
         order_total: data.subtotal,
@@ -231,26 +241,23 @@ const createDeliveryTaskFromOrder = async (data) => {
       },
     };
 
-   const baseUrl = process.env.FLASH_BASE_URL;
-   const url = `${baseUrl}/createTask`;
+    const baseUrl = FLASH_BASE_URL;
+    const url = `${baseUrl}/createTask`;
 
-   console.log("🚨 RIDER BASE URL:", baseUrl);
-   console.log("🚨 FULL RIDER URL:", url);
+    console.log("🚨 RIDER BASE URL:", baseUrl);
+    console.log("🚨 FULL RIDER URL:", url);
 
-   if (!baseUrl) {
-     throw new Error("RIDER_API_URL is undefined");
-   }
+    if (!baseUrl) throw new Error("FLASH_BASE_URL is undefined");
+    if (!baseUrl.startsWith("http")) throw new Error("FLASH_BASE_URL must start with http/https");
 
-   if (!baseUrl.startsWith("http")) {
-     throw new Error("RIDER_API_URL must start with http/https");
-   }
+    const response = await axios.post(url, payload, {
+      headers: {
+        "Content-Type": "application/json",
+        "access-token": point.access_token,
+      },
+    });
 
-   const response = await axios.post(url, payload, {
-     headers: {
-       "Content-Type": "application/json",
-       "access-token": STATIC_ACCESS_TOKEN,
-     },
-   });
+    console.log("📦 Rider Response:", response.data);
 
     if (!response.data.status) {
       return {
@@ -264,6 +271,8 @@ const createDeliveryTaskFromOrder = async (data) => {
       data: response.data,
     };
   } catch (error) {
+    console.error("❌ Create task failed:", error.message);
+
     return {
       success: false,
       error: error.response?.data || error.message,
@@ -274,20 +283,20 @@ const createDeliveryTaskFromOrder = async (data) => {
 /**
  * Track Task Status
  */
-const trackTaskStatus = async (taskId) => {
+const trackTaskStatus = async (taskId, storeId) => {
   try {
     const response = await axios.post(
-      `${process.env.FLASH_BASE_URL}/trackTaskStatus`,
+      `${FLASH_BASE_URL}/trackTaskStatus`,
       {
-        storeId: STATIC_STORE_ID,
+        storeId,
         taskId,
       },
       {
         headers: {
           "Content-Type": "application/json",
-          "access-token": STATIC_ACCESS_TOKEN,
+          "access-token": process.env.ACCESS_TOKEN,
         },
-      },
+      }
     );
 
     return {
@@ -295,6 +304,8 @@ const trackTaskStatus = async (taskId) => {
       data: response.data,
     };
   } catch (error) {
+    console.error("❌ Track failed:", error.message);
+
     return {
       success: false,
       error: error.response?.data || error.message,
@@ -305,20 +316,20 @@ const trackTaskStatus = async (taskId) => {
 /**
  * Cancel Task
  */
-const cancelDeliveryTask = async (taskId) => {
+const cancelDeliveryTask = async (taskId, storeId) => {
   try {
     const response = await axios.post(
-      `${process.env.FLASH_BASE_URL}/cancelTask`,
+      `${FLASH_BASE_URL}/cancelTask`,
       {
-        storeId: STATIC_STORE_ID,
+        storeId,
         taskId,
       },
       {
         headers: {
           "Content-Type": "application/json",
-          "access-token": STATIC_ACCESS_TOKEN,
+          "access-token": process.env.ACCESS_TOKEN,
         },
-      },
+      }
     );
 
     return {
@@ -326,27 +337,34 @@ const cancelDeliveryTask = async (taskId) => {
       message: response.data.message,
     };
   } catch (error) {
+    console.error("❌ Cancel failed:", error.message);
+
     return {
       success: false,
       error: error.response?.data || error.message,
     };
   }
 };
-const trackAndSaveTaskStatus = async (taskId, orderId) => {
+
+/**
+ * Track and Save Task Status
+ */
+const trackAndSaveTaskStatus = async (taskId, orderId, storeId) => {
   try {
-    const baseUrl = process.env.FLASH_BASE_URL.replace(/\/$/, "");
+    const baseUrl = FLASH_BASE_URL.replace(/\/$/, "");
+
     const response = await axios.post(
       `${baseUrl}/trackTaskStatus`,
       {
-        storeId: STATIC_STORE_ID,
+        storeId,
         taskId,
       },
       {
         headers: {
           "Content-Type": "application/json",
-          "access-token": STATIC_ACCESS_TOKEN,
+          "access-token": process.env.ACCESS_TOKEN,
         },
-      },
+      }
     );
 
     const riderData = response.data?.data;
@@ -380,6 +398,7 @@ const trackAndSaveTaskStatus = async (taskId, orderId) => {
     console.error("❌ trackAndSaveTaskStatus failed:", err.message);
   }
 };
+
 module.exports = {
   checkServiceability,
   createDeliveryTaskFromOrder,
