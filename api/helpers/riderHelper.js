@@ -1,9 +1,10 @@
 const axios = require("axios");
 const { FLASH_BASE_URL } = require("../../config/env");
 const supabase = require("../../config/db");
-
+const { sendRiderDetailsToPetPuja } = require("./petpujaHelper");
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
-
+const STATIC_STORE_ID = "89";
+const STATIC_ACCESS_TOKEN = "grdgedhs";
 /**
  * Normalize DB row
  */
@@ -151,12 +152,13 @@ const checkServiceability = async (pickupLat, pickupLong, dropLat, dropLong) => 
 
     const point = await getNearestDeliveryPoint(pickupLat, pickupLong);
 
-    console.log("🏬 Store Used:", point.store_id);
+    console.log("🏬 Store Used:", String(point.store_id),);
 
-    const flashClient = createFlashClient(point.access_token);
-
+    const flashClient = createFlashClient(String(point.access_token));
+    // const flashClient = createFlashClient(STATIC_ACCESS_TOKEN);
     const payload = {
       store_id: String(point.store_id),
+      // store_id: STATIC_STORE_ID,
       pickupDetails: {
         latitude: String(pickupLat),
         longitude: String(pickupLong),
@@ -175,7 +177,7 @@ const checkServiceability = async (pickupLat, pickupLong, dropLat, dropLong) => 
       success: true,
       serviceable: data?.serviceability || false,
       payouts: data?.payouts || null,
-      store_used: point.store_id,
+      store_used: String(point.store_id),
     };
   } catch (error) {
     console.error("❌ Serviceability error:", error.message);
@@ -193,14 +195,18 @@ const checkServiceability = async (pickupLat, pickupLong, dropLat, dropLong) => 
 const createDeliveryTaskFromOrder = async (data) => {
   try {
     const point = await getNearestDeliveryPoint(
+
       parseFloat(data.pickup_details?.latitude ?? 0),
       parseFloat(data.pickup_details?.longitude ?? 0)
     );
-
+    const storeId = String(point.store_id);
+    const accessToken = String(point.access_token);
+    // const storeId = STATIC_STORE_ID;
+    // const accessToken = STATIC_ACCESS_TOKEN;
     console.log("🚀 Creating task for:", point.name);
 
     const payload = {
-      storeId: point.store_id,
+      storeId: storeId,
 
       order_details: {
         order_total: data.subtotal,
@@ -225,7 +231,7 @@ const createDeliveryTaskFromOrder = async (data) => {
         latitude: parseFloat(data.delivery_address.coordinates.lat),
         longitude: parseFloat(data.delivery_address.coordinates.lng),
         address: data.delivery_address.fullAddress,
-        city: data.delivery_address.landmark,
+        city: data.customer.city,
       },
 
       order_items: data.items.map((item) => ({
@@ -235,10 +241,10 @@ const createDeliveryTaskFromOrder = async (data) => {
         price: Number(item.price),
       })),
 
-      authentication: {
-        delivery_otp: data.otp,
-        rto_otp: data.otp,
-      },
+      // authentication: {
+      //   delivery_otp: data.otp,
+      //   rto_otp: data.otp,
+      // },
     };
 
     const baseUrl = FLASH_BASE_URL;
@@ -253,7 +259,7 @@ const createDeliveryTaskFromOrder = async (data) => {
     const response = await axios.post(url, payload, {
       headers: {
         "Content-Type": "application/json",
-        "access-token": point.access_token,
+        "access-token": accessToken,
       },
     });
 
@@ -269,6 +275,10 @@ const createDeliveryTaskFromOrder = async (data) => {
     return {
       success: true,
       data: response.data,
+      meta: {
+        store_id: storeId,
+        access_token: accessToken,
+      },
     };
   } catch (error) {
     console.error("❌ Create task failed:", error.message);
@@ -283,7 +293,7 @@ const createDeliveryTaskFromOrder = async (data) => {
 /**
  * Track Task Status
  */
-const trackTaskStatus = async (taskId, storeId) => {
+const trackTaskStatus = async (taskId, storeId, accessToken) => {
   try {
     const response = await axios.post(
       `${FLASH_BASE_URL}/trackTaskStatus`,
@@ -294,7 +304,7 @@ const trackTaskStatus = async (taskId, storeId) => {
       {
         headers: {
           "Content-Type": "application/json",
-          "access-token": process.env.ACCESS_TOKEN,
+          "access-token": accessToken,
         },
       }
     );
@@ -316,7 +326,7 @@ const trackTaskStatus = async (taskId, storeId) => {
 /**
  * Cancel Task
  */
-const cancelDeliveryTask = async (taskId, storeId) => {
+const cancelDeliveryTask = async (taskId, storeId, accessToken) => {
   try {
     const response = await axios.post(
       `${FLASH_BASE_URL}/cancelTask`,
@@ -327,7 +337,7 @@ const cancelDeliveryTask = async (taskId, storeId) => {
       {
         headers: {
           "Content-Type": "application/json",
-          "access-token": process.env.ACCESS_TOKEN,
+          "access-token": accessToken
         },
       }
     );
@@ -349,12 +359,19 @@ const cancelDeliveryTask = async (taskId, storeId) => {
 /**
  * Track and Save Task Status
  */
-const trackAndSaveTaskStatus = async (taskId, orderId, storeId) => {
+const trackAndSaveTaskStatus = async (taskId, orderId, storeId, accessToken) => {
   try {
     const baseUrl = FLASH_BASE_URL.replace(/\/$/, "");
+    const url = `${baseUrl}/trackTaskStatus`;
+
+    console.log("📡 TRACK API URL:", url);
+    console.log("📤 TRACK REQUEST PAYLOAD:", {
+      storeId,
+      taskId,
+    });
 
     const response = await axios.post(
-      `${baseUrl}/trackTaskStatus`,
+      url,
       {
         storeId,
         taskId,
@@ -362,13 +379,30 @@ const trackAndSaveTaskStatus = async (taskId, orderId, storeId) => {
       {
         headers: {
           "Content-Type": "application/json",
-          "access-token": process.env.ACCESS_TOKEN,
+          "access-token": accessToken,
         },
       }
     );
 
+    console.log("📥 FULL TRACK RESPONSE:", JSON.stringify(response.data, null, 2));
+
     const riderData = response.data?.data;
-    if (!riderData) return;
+
+    const safeRiderName =
+      riderData?.rider_name && riderData.rider_name !== "Not Provided"
+        ? riderData.rider_name
+        : "Not Provided";
+
+    const safeRiderContact =
+      riderData?.rider_contact && riderData.rider_contact !== "Not Provided"
+        ? riderData.rider_contact
+        : "9999999999";
+    if (!riderData) {
+      console.log("⚠️ No riderData received");
+      return;
+    }
+
+    console.log("🚚 Rider Data Extracted:", riderData);
 
     const { data: order } = await supabase
       .from("orders")
@@ -379,8 +413,8 @@ const trackAndSaveTaskStatus = async (taskId, orderId, storeId) => {
     const updatedDeliveryInfo = {
       ...order?.delivery_info,
       taskId: riderData.taskId,
-      rider_name: riderData.rider_name,
-      rider_contact: riderData.rider_contact,
+      rider_name: safeRiderName,
+      rider_contact: safeRiderContact,
       latitude: riderData.latitude,
       longitude: riderData.longitude,
       tracking_url: riderData.tracking_url,
@@ -388,12 +422,29 @@ const trackAndSaveTaskStatus = async (taskId, orderId, storeId) => {
       lastSyncTime: riderData.lastSyncTime,
     };
 
+    console.log("💾 DATA BEING SAVED TO DB:", updatedDeliveryInfo);
+
     await supabase
       .from("orders")
       .update({ delivery_info: updatedDeliveryInfo })
       .eq("id", orderId);
 
     console.log("✅ Rider tracking info saved for order:", orderId);
+
+    const petpujaPayload = {
+      status_code: response.data?.status_code,
+      data: {
+        orderId,
+        taskId: riderData.taskId,
+        rider_name: safeRiderName,
+        rider_contact: safeRiderContact,
+      },
+    };
+
+    console.log("📤 SENDING TO PETPOOJA:", petpujaPayload);
+
+    await sendRiderDetailsToPetPuja(petpujaPayload);
+
   } catch (err) {
     console.error("❌ trackAndSaveTaskStatus failed:", err.message);
   }

@@ -121,7 +121,13 @@ const cancelOrder = async (req, res) => {
     try {
       const taskId = order?.delivery_info?.taskId;
       if (taskId) {
-        const cancelResp = await cancelDeliveryTask(taskId);
+        const cancelResp = await cancelDeliveryTask(
+          taskId,
+          order?.delivery_info?.store_id,
+          order?.delivery_info?.access_token
+        );
+
+
         if (cancelResp.success) {
           console.log("✅ Rider cancelled:", taskId);
         } else {

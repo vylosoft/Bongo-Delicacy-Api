@@ -1,16 +1,13 @@
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const env = require("../../config/env.js");
-const {
-  createDeliveryTaskFromOrder,
-  trackAndSaveTaskStatus,
-} = require("../helpers/riderHelper");
+
 const { saveOrderSchema } = require("../validations/order.validation.js");
 
 const {
   placeOrderWithPetpuja,
   cancelPetpujaOrder,
-  sendRiderDetailsToPetPuja,
+
 } = require("../helpers/petpujaHelper.js");
 
 
@@ -218,6 +215,7 @@ const verifyPayment = async (req, res) => {
       pricing,
     } = orderData;
 
+    const pointsEarned = Math.floor(pricing.total_amount / 100);
     const orderRow = {
       id: clientorderID,
       brand_id: brandId,
@@ -228,7 +226,12 @@ const verifyPayment = async (req, res) => {
       delivery_address: deliveryAddress,
       pickup_details: orderData.pickup_details ?? null,
       subtotal: pricing.subtotal,
+      discount_amount: pricing.flat_discount,
+      loyalty_discount: pricing.loyalty_discount,
+      gst_amount: pricing.gst_amount,
+      delivery_charge: pricing.delivery_charge,
       total_amount: pricing.total_amount,
+      points_earned: pointsEarned,
       status: "RECEIVED",
       external_order_id: razorpay_order_id,
       refund_id: razorpay_payment_id,
@@ -245,88 +248,8 @@ const verifyPayment = async (req, res) => {
     console.log("✅ Order saved");
 
 
-  /* ===== RIDER FLOW ===== */
-setTimeout(async () => {
-  try {
-    console.log("🚀 Rider booking start");
-
-    const { data: order, error } = await supabase
-      .from("orders")
-      .select("*")
-      .eq("id", clientorderID)
-      .maybeSingle();
-
-    if (error) {
-      logError("FETCH ORDER FAILED", error);
-      return;
-    }
-
-    if (!order) {
-      console.log("❌ Order not found");
-      return;
-    }
-
-    // ✅ Fallback: fetch outlet from DB if pickup_details is missing/incomplete
-    if (!order.pickup_details?.contact_number) {
-      const { data: outlet } = await supabase
-        .from("outlet")
-        .select("contact, address, city, lat, long, name")
-        .eq("petpooja_outlet_id", order.brand_id)
-        .maybeSingle();
-
-      console.log("🏪 outlet result:", outlet);
-
-      if (outlet) {
-        order.pickup_details = {
-          name:
-            order.pickup_details?.name ||
-            outlet.name ||
-            order.restaurant_name ||
-            "",
-          contact_number: outlet.contact ?? "",
-          latitude: order.pickup_details?.latitude || String(outlet.lat ?? ""),
-          longitude:
-            order.pickup_details?.longitude || String(outlet.long ?? ""),
-          address: order.pickup_details?.address || outlet.address || "",
-          city: order.pickup_details?.city || outlet.city || "Bangalore",
-        };
-      }
-    }
-    console.log("📦 pickup_details:", order.pickup_details);
-
-    const riderResp = await createDeliveryTaskFromOrder(order);
-
-    if (!riderResp.success) {
-      console.log("❌ Rider failed:", riderResp.error);
-      return;
-    }
-
-    // WITH THIS:
-    console.log("✅ Rider booked:", riderResp.data);
-
-    await supabase
-      .from("orders")
-      .update({ delivery_info: riderResp.data })
-      .eq("id", clientorderID);
-
-    await sendRiderDetailsToPetPuja({
-      status_code: "ACCEPTED",
-      data: {
-        orderId: clientorderID,
-        taskId: riderResp.data.taskId,
-        rider_name: "",
-        rider_contact: "",
-      },
-    });
-
-    // Track rider info after 30s
-    setTimeout(() => {
-      trackAndSaveTaskStatus(riderResp.data.taskId, clientorderID);
-    }, 30000);
-  } catch (err) {
-    logError("RIDER FLOW ERROR", err);
-  }
-}, 5000);
+    /* ===== RIDER FLOW ===== */
+ 
 
     return res.json({ success: true });
   } catch (err) {

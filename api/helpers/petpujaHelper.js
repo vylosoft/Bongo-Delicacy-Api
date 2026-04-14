@@ -98,19 +98,30 @@ const getOutletIdFromOrder = async (orderId) => {
  */
 const sendRiderDetailsToPetPuja = async (riderInfo) => {
   try {
+    if (!riderInfo?.data?.orderId) {
+      console.log("❌ Missing orderId:", riderInfo);
+      return { success: false };
+    }
+
     const status = riderStatusPetpujaStatusMapping(riderInfo.status_code);
 
     if (!status) {
-      console.log("⚠️ No mapping for status:", riderInfo.status_code);
+      console.log("⚠️ No mapping for status:", riderInfo.status_code, riderInfo);
       return { success: false };
     }
 
     const outletId = await getOutletIdFromOrder(riderInfo.data.orderId);
+    if (!outletId) return { success: false };
 
-    if (!outletId) {
-      console.error("❌ Could not resolve outlet_id for order:", riderInfo.data.orderId);
-      return { success: false };
-    }
+    const safeName =
+      riderInfo.data.rider_name && riderInfo.data.rider_name !== "Not Provided"
+        ? riderInfo.data.rider_name
+        : "Not Provided";
+
+    const safeContact =
+      riderInfo.data.rider_contact && riderInfo.data.rider_contact !== "Not Provided"
+        ? riderInfo.data.rider_contact
+        : "9999999999";
 
     const payload = {
       app_key: process.env.APP_KEY,
@@ -118,37 +129,36 @@ const sendRiderDetailsToPetPuja = async (riderInfo) => {
       access_token: process.env.ACCESS_TOKEN,
       order_id: riderInfo.data.orderId,
       outlet_id: String(outletId),
-      status: status,
+      status,
       rider_data: {
-        rider_name: riderInfo.data.rider_name,
-        rider_phone_number: riderInfo.data.rider_contact,
+        rider_name: safeName,
+        rider_phone_number: safeContact,
       },
       external_order_id: "",
     };
 
-    console.log("📤 Sending rider update to PetPooja:", payload);
+    console.log("📤 Sending rider update:", payload);
 
-    const { data } = await petpujaClient.post("/rider_status_update", payload);
+    const { data } = await petpujaClient.post(
+      "/rider_status_update",
+      payload
+    );
 
-    return {
-      success: true,
-      data,
-    };
+    console.log("📥 PetPooja Response:", data);
+
+    return { success: true, data };
+
   } catch (error) {
     console.error("❌ PetPooja rider update failed:", error.message);
-
-    return {
-      success: false,
-    };
+    return { success: false };
   }
 };
-
 /**
  * Status Mapping
  */
 const riderStatusPetpujaStatusMapping = (riderStatus) => {
   const riderStatusConst = riderStatusConfig();
-
+  if (riderStatus === "ACCEPTED") return "rider-assigned";
   if (riderStatusConst.ALLOTTED === riderStatus) return "rider-assigned";
   if (riderStatusConst.ARRIVED === riderStatus) return "rider-arrived";
   if (riderStatusConst.DISPATCHED === riderStatus) return "pickedup";

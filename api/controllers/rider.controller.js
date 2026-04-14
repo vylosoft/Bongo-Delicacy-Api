@@ -113,7 +113,9 @@ const riderBooking = async (req, res) => {
         const deliveryInfo = {
             ...dbData?.delivery_info,
             taskId: riderBookingResp.data.taskId,
-            Status_code: riderBookingResp.data.Status_code
+            Status_code: riderBookingResp.data.Status_code,
+            store_id: riderBookingResp.meta.store_id,
+            access_token: riderBookingResp.meta.access_token,
         }
         console.log("deliveryInfo::", deliveryInfo)
         const { data: updateData, error: updateErr } = await supabase
@@ -158,7 +160,25 @@ const riderCancel = async (req, res) => {
             })
         }
         const { taskId } = value;
-        const cancelRiderResp = await cancelDeliveryTask(taskId);
+        // 🔥 get order using taskId
+        const { data: order } = await supabase
+            .from("orders")
+            .select("delivery_info")
+            .eq("delivery_info->>taskId", taskId)
+            .maybeSingle();
+
+        if (!order) {
+            return res.error({
+                status: 404,
+                message: "Order not found for this task",
+            });
+        }
+
+        const cancelRiderResp = await cancelDeliveryTask(
+            taskId,
+            order?.delivery_info?.store_id,
+            order?.delivery_info?.access_token
+        );
         if (!cancelRiderResp.success) {
             return res.error({
                 status: 400,
@@ -224,7 +244,14 @@ const riderDetails = async (req, res) => {
         }
 
         /** Call Rider third party api to get rider info */
-        const riderResp = await trackTaskStatus(taskId);
+        const storeId = orderData?.delivery_info?.store_id;
+        const accessToken = orderData?.delivery_info?.access_token;
+
+        const riderResp = await trackTaskStatus(
+            taskId,
+            storeId,
+            accessToken
+        );
 
         if (!riderResp.success) {
             return res.error({
@@ -234,10 +261,18 @@ const riderDetails = async (req, res) => {
         }
 
         const riderData = riderResp.data;
-        await sendRiderDetailsToPetPuja(riderResp.data);
+        await sendRiderDetailsToPetPuja({
+            status_code: riderResp.data?.status_code,
+            data: {
+                orderId: order_id,
+                taskId: riderData.taskId,
+                rider_name: riderData.rider_name,
+                rider_contact: riderData.rider_contact,
+            },
+        });
         const deliveryInfo = {
             ...orderData.delivery_info,
-            rider_name : riderData.rider_name,
+            rider_name: riderData.rider_name,
             rider_contact: riderData.rider_contact,
             tracking_url: riderData.tracking_url,
             rider_lat: riderData.latitude,

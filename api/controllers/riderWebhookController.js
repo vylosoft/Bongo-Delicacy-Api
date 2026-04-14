@@ -90,11 +90,25 @@ const riderWebhookController = async (req, res) => {
     /**
      * 🔥 SEND RIDER STATUS TO PETPOOJA
      */
+    const safeName =
+      rider_name && rider_name !== "Not Provided"
+        ? rider_name
+        : "Not Provided";
+
+    const safeContact =
+      rider_contact && rider_contact !== "Not Provided"
+        ? rider_contact
+        : "9999999999";
+
     await sendRiderDetailsToPetPuja({
       status_code,
-      data,
+      data: {
+        orderId: orderData.id,
+        taskId,
+        rider_name: safeName,
+        rider_contact: safeContact,
+      },
     });
-
     /**
      * 🔥 UPDATE ORDER STATUS FROM RIDER
      */
