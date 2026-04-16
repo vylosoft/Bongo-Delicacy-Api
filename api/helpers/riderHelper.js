@@ -209,7 +209,7 @@ const createDeliveryTaskFromOrder = async (data) => {
       storeId: storeId,
 
       order_details: {
-        order_total: data.subtotal,
+        order_total: data.total_amount,
         paid: "true",
         vendor_order_id: data.id,
         order_source: "app",
@@ -223,6 +223,7 @@ const createDeliveryTaskFromOrder = async (data) => {
         longitude: parseFloat(data.pickup_details?.longitude ?? 0),
         address: data.pickup_details?.address ?? "",
         city: data.pickup_details?.city ?? "Bangalore",
+        state: data.pickup_details?.state ?? "Bangalore",
       },
 
       drop_details: {
@@ -232,6 +233,7 @@ const createDeliveryTaskFromOrder = async (data) => {
         longitude: parseFloat(data.delivery_address.coordinates.lng),
         address: data.delivery_address.fullAddress,
         city: data.customer.city,
+        state: data.customer.state,
       },
 
       order_items: data.items.map((item) => ({
@@ -262,7 +264,7 @@ const createDeliveryTaskFromOrder = async (data) => {
         "access-token": accessToken,
       },
     });
-
+    console.log("📤 Request Data:", payload);
     console.log("📦 Rider Response:", response.data);
 
     if (!response.data.status) {

@@ -17,11 +17,23 @@ const riderWebhookController = async (req, res) => {
 
     const { status, data, status_code } = payload;
 
-    // 🔒 Validate payload
-    if (!status || !data || !data.taskId) {
+    /**
+     * 🔒 Validate payload
+     */
+    if (status !== true || !data || !data.taskId || !status_code) {
       return res.status(400).json({
         error: "Bad Request",
         message: "Invalid payload structure",
+      });
+    }
+
+    const allowedStatus = ["DISPATCHED", "DELIVERED", "CANCELLED"];
+
+    if (!allowedStatus.includes(status_code)) {
+      console.log("⚠️ Unknown status_code:", status_code);
+      return res.status(200).json({
+        status: true,
+        message: "Ignored unknown status",
       });
     }
 
@@ -49,6 +61,7 @@ const riderWebhookController = async (req, res) => {
 
     if (fetchError) {
       console.log("❌ Fetch Error:", fetchError);
+      return res.status(500).json({ error: "DB fetch failed" });
     }
 
     if (!orderData) {
@@ -60,17 +73,47 @@ const riderWebhookController = async (req, res) => {
     }
 
     /**
-     * 🔄 Build updated delivery_info
+     * 🛑 Prevent duplicate webhook processing
+     */
+    if (orderData.delivery_info?.status_code === status_code) {
+      console.log("⚠️ Duplicate webhook ignored");
+      return res.status(200).json({
+        status: true,
+        message: "Duplicate ignored",
+      });
+    }
+
+    /**
+     * 🔄 Build updated delivery_info safely
      */
     const updatedDeliveryInfo = {
       ...orderData.delivery_info,
-      rider_name: rider_name || orderData.delivery_info?.rider_name,
-      rider_contact: rider_contact || orderData.delivery_info?.rider_contact,
-      rider_lat: latitude || orderData.delivery_info?.rider_lat,
-      rider_long: longitude || orderData.delivery_info?.rider_long,
-      tracking_url: tracking_url || orderData.delivery_info?.tracking_url,
-      rto_reason: rto_reason || null,
-      status_code: status_code,
+      rider_name:
+        rider_name !== undefined
+          ? rider_name
+          : orderData.delivery_info?.rider_name,
+      rider_contact:
+        rider_contact !== undefined
+          ? rider_contact
+          : orderData.delivery_info?.rider_contact,
+      rider_lat:
+        latitude !== undefined
+          ? latitude
+          : orderData.delivery_info?.rider_lat,
+      rider_long:
+        longitude !== undefined
+          ? longitude
+          : orderData.delivery_info?.rider_long,
+      tracking_url:
+        tracking_url !== undefined
+          ? tracking_url
+          : orderData.delivery_info?.tracking_url,
+      rto_reason:
+        rto_reason !== undefined
+          ? rto_reason
+          : orderData.delivery_info?.rto_reason,
+      status_code,
+      last_updated_at: new Date().toISOString(),
     };
 
     /**
@@ -83,34 +126,44 @@ const riderWebhookController = async (req, res) => {
 
     if (updateError) {
       console.log("❌ Update Error:", updateError);
-    } else {
-      console.log("✅ Delivery info updated:", orderData.id);
+      return res.status(500).json({ error: "Update failed" });
     }
 
+    console.log("✅ Delivery info updated:", orderData.id);
+
     /**
-     * 🔥 SEND RIDER STATUS TO PETPOOJA
+     * 🔥 Fire-and-forget PetPooja rider update
      */
-    const safeName =
-      rider_name && rider_name !== "Not Provided"
-        ? rider_name
-        : "Not Provided";
+    (async () => {
+      try {
+        const safeName =
+          rider_name && rider_name !== "Not Provided"
+            ? rider_name
+            : "Not Provided";
 
-    const safeContact =
-      rider_contact && rider_contact !== "Not Provided"
-        ? rider_contact
-        : "9999999999";
+        const safeContact =
+          rider_contact && rider_contact !== "Not Provided"
+            ? rider_contact
+            : "9999999999";
 
-    await sendRiderDetailsToPetPuja({
-      status_code,
-      data: {
-        orderId: orderData.id,
-        taskId,
-        rider_name: safeName,
-        rider_contact: safeContact,
-      },
-    });
+        await sendRiderDetailsToPetPuja({
+          status_code,
+          data: {
+            orderId: orderData.id,
+            taskId,
+            rider_name: safeName,
+            rider_contact: safeContact,
+          },
+        });
+
+        console.log("📤 Sent rider details to PetPooja");
+      } catch (err) {
+        console.error("❌ PetPooja rider update failed:", err.message);
+      }
+    })();
+
     /**
-     * 🔥 UPDATE ORDER STATUS FROM RIDER
+     * 🔄 Update order status
      */
     let updatedOrderStatus = null;
 
@@ -127,22 +180,24 @@ const riderWebhookController = async (req, res) => {
     }
 
     /**
-     * 🔥 RIDER CANCEL → CANCEL PETPOOJA + UPDATE ORDER
+     * 🚨 CANCEL FLOW
      */
     if (status_code === "CANCELLED") {
-      try {
-        console.log("🚨 Rider cancelled → cancelling PetPooja");
+      (async () => {
+        try {
+          console.log("🚨 Rider cancelled → cancelling PetPooja");
 
-        await cancelPetpujaOrder({
-          restID: orderData.brand_id,
-          clientorderID: orderData.id,
-          cancelReason: "Rider cancelled",
-        });
+          await cancelPetpujaOrder({
+            restID: orderData.brand_id,
+            clientorderID: orderData.id,
+            cancelReason: "Rider cancelled",
+          });
 
-        console.log("✅ PetPooja cancelled due to rider");
-      } catch (err) {
-        console.error("❌ PetPooja cancel failed:", err.message);
-      }
+          console.log("✅ PetPooja cancelled");
+        } catch (err) {
+          console.error("❌ PetPooja cancel failed:", err.message);
+        }
+      })();
 
       await supabase
         .from("orders")
@@ -155,11 +210,11 @@ const riderWebhookController = async (req, res) => {
         })
         .eq("id", orderData.id);
 
-      console.log("📦 Order marked CANCELLED due to rider cancellation");
+      console.log("📦 Order marked CANCELLED");
     }
 
     /**
-     * ✅ Always respond quickly
+     * ✅ Always respond fast
      */
     return res.status(200).json({
       status: true,
@@ -167,6 +222,7 @@ const riderWebhookController = async (req, res) => {
     });
   } catch (error) {
     console.error("🔥 Webhook Error:", error);
+
     return res.status(500).json({
       error: "Internal Server Error",
     });

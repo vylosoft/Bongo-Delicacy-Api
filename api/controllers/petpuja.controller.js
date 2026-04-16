@@ -190,7 +190,7 @@ exports.updateOrderStatus = async (req, res) => {
           if (!order.pickup_details?.contact_number) {
             const { data: outlet } = await supabase
               .from("outlet")
-              .select("contact, address, city, lat, long, name")
+              .select("contact, address, city, lat, long, name,state")
               .eq("petpooja_outlet_id", order.brand_id)
               .maybeSingle();
 
@@ -208,6 +208,7 @@ exports.updateOrderStatus = async (req, res) => {
                   order.pickup_details?.longitude || String(outlet.long ?? ""),
                 address: order.pickup_details?.address || outlet.address || "",
                 city: order.pickup_details?.city || outlet.city || "Bangalore",
+                state:order.pickup_details?.state,
               };
             }
           }
