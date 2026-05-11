@@ -83,10 +83,49 @@ async function persistMenuImages(payload, rest_id) {
 /* -------------------- WEBHOOK -------------------- */
 
 const pushMenuWebhook = async (req, res) => {
+
+  /* ---- 1. Log raw request FIRST — before anything else ---- */
+  let webhookLogId = null;
+  try {
+    const { data: logData } = await supabase
+      .from("patpuja_manu_webhook")
+      .insert({
+        request_url : req.originalUrl || req.url,
+        request_body: req.body ?? null,
+        is_success  : false,          // updated once we know the outcome
+      })
+      .select("id")
+      .single();
+
+    webhookLogId = logData?.id ?? null;
+  } catch (logErr) {
+    // Never block the main flow if logging fails
+    console.error("patpuja_manu_webhook insert failed:", logErr.message);
+  }
+
+  /* Helper — send response and update log row in one call */
+  const respond = async (statusCode, body) => {
+    if (webhookLogId) {
+      try {
+        await supabase
+          .from("patpuja_manu_webhook")
+          .update({
+            response_body: body,
+            is_success   : statusCode >= 200 && statusCode < 300 && body?.ok === true,
+          })
+          .eq("id", webhookLogId);
+      } catch (updateErr) {
+        console.error("patpuja_manu_webhook update failed:", updateErr.message);
+      }
+    }
+    return res.status(statusCode).json(body);
+  };
+
+  /* ---- 2. All original logic below — completely unchanged ---- */
   try {
     const { error } = pushMenuSchema.validate(req.body);
     if (error) {
-      return res.status(400).json({ ok: false, message: error.message });
+      return respond(400, { ok: false, message: error.message });
     }
 
     const rawPayload = req.body;
@@ -99,10 +138,7 @@ const pushMenuWebhook = async (req, res) => {
     const rest_id = String(menusharingcode || restaurantid || "").trim();
 
     if (!rest_id) {
-      return res.status(400).json({
-        ok: false,
-        message: "rest_id not found",
-      });
+      return respond(400, { ok: false, message: "rest_id not found" });
     }
 
     const restaurant_name = details.restaurantname || null;
@@ -129,11 +165,7 @@ const pushMenuWebhook = async (req, res) => {
     const finalHash = hashPayload(finalPayload);
 
     if (existing && existing.version_hash === finalHash) {
-      return res.status(200).json({
-        ok: true,
-        skipped: true,
-        reason: "menu unchanged",
-      });
+      return respond(200, { ok: true, skipped: true, reason: "menu unchanged" });
     }
 
     /* ---- ensure restaurant exists ---- */
@@ -166,15 +198,15 @@ const pushMenuWebhook = async (req, res) => {
     /* ---- upsert outlet ---- */
 
     const outletPayload = {
-      resturent_id: supabase_resturent_id,
-      lat: details.latitude,
-      long: details.longitude,
-      is_active: restaurant.active === "1",
+      resturent_id    : supabase_resturent_id,
+      lat             : details.latitude,
+      long            : details.longitude,
+      is_active       : restaurant.active === "1",
       petpooja_outlet_id: details.menusharingcode,
-      contact: details.contact,
-      address: details.address,
-      city: details.city,
-      state: details.state,
+      contact         : details.contact,
+      address         : details.address,
+      city            : details.city,
+      state           : details.state,
     };
 
     await supabase
@@ -193,23 +225,23 @@ const pushMenuWebhook = async (req, res) => {
           latitude,
           longitude,
           isclosed,
-          payload: finalPayload,
-          version_hash: finalHash,
-          last_pushed_at: now,
-          updated_at: now,
+          payload        : finalPayload,
+          version_hash   : finalHash,
+          last_pushed_at : now,
+          updated_at     : now,
         },
         { onConflict: "rest_id" },
       );
 
     if (upsertError) {
       console.error("Cache upsert failed:", upsertError);
-      return res.status(500).json({ ok: false });
+      return respond(500, { ok: false });
     }
 
-    return res.status(200).json({ ok: true });
+    return respond(200, { ok: true });
   } catch (err) {
     console.error("Webhook error:", err);
-    return res.status(500).json({ ok: false });
+    return respond(500, { ok: false });
   }
 };
 

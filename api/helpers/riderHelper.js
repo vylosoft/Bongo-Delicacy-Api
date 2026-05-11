@@ -390,15 +390,7 @@ const trackAndSaveTaskStatus = async (taskId, orderId, storeId, accessToken) => 
 
     const riderData = response.data?.data;
 
-    const safeRiderName =
-      riderData?.rider_name && riderData.rider_name !== "Not Provided"
-        ? riderData.rider_name
-        : "Not Provided";
 
-    const safeRiderContact =
-      riderData?.rider_contact && riderData.rider_contact !== "Not Provided"
-        ? riderData.rider_contact
-        : "9999999999";
     if (!riderData) {
       console.log("⚠️ No riderData received");
       return;
@@ -415,8 +407,6 @@ const trackAndSaveTaskStatus = async (taskId, orderId, storeId, accessToken) => 
     const updatedDeliveryInfo = {
       ...order?.delivery_info,
       taskId: riderData.taskId,
-      rider_name: safeRiderName,
-      rider_contact: safeRiderContact,
       latitude: riderData.latitude,
       longitude: riderData.longitude,
       tracking_url: riderData.tracking_url,
@@ -424,6 +414,20 @@ const trackAndSaveTaskStatus = async (taskId, orderId, storeId, accessToken) => 
       lastSyncTime: riderData.lastSyncTime,
     };
 
+    // only update if valid
+    if (
+      riderData?.rider_name &&
+      riderData.rider_name !== "Not Provided"
+    ) {
+      updatedDeliveryInfo.rider_name = riderData.rider_name;
+    }
+
+    if (
+      riderData?.rider_contact &&
+      riderData.rider_contact !== "9999999999"
+    ) {
+      updatedDeliveryInfo.rider_contact = riderData.rider_contact;
+    }
     console.log("💾 DATA BEING SAVED TO DB:", updatedDeliveryInfo);
 
     await supabase
@@ -433,14 +437,30 @@ const trackAndSaveTaskStatus = async (taskId, orderId, storeId, accessToken) => 
 
     console.log("✅ Rider tracking info saved for order:", orderId);
 
+    const riderPayload = {
+      orderId,
+      taskId: riderData.taskId,
+    };
+
+    // only include valid name
+    if (
+      riderData?.rider_name &&
+      riderData.rider_name !== "Not Provided"
+    ) {
+      riderPayload.rider_name = riderData.rider_name;
+    }
+
+    // only include valid phone
+    if (
+      riderData?.rider_contact &&
+      riderData.rider_contact !== "9999999999"
+    ) {
+      riderPayload.rider_contact = riderData.rider_contact;
+    }
+
     const petpujaPayload = {
       status_code: response.data?.status_code,
-      data: {
-        orderId,
-        taskId: riderData.taskId,
-        rider_name: safeRiderName,
-        rider_contact: safeRiderContact,
-      },
+      data: riderPayload,
     };
 
     console.log("📤 SENDING TO PETPOOJA:", petpujaPayload);

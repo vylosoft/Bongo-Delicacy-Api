@@ -5,7 +5,9 @@ const petpoojaMenuController = require("../controllers/webhooks/petpoojaMenu.con
 const {
   handlePetPoojaStoreWebhook,getStoreStatus
 } = require("../controllers/webhooks/petpoojaStore.controller");
+const { getAllMenuWebhookLogs } = require("../controllers/getWebhookLogs.controller");
 
+router.get("/menu-webhook-logs", getAllMenuWebhookLogs);
 router.post("/store-update", handlePetPoojaStoreWebhook);
 router.post("/store-status", getStoreStatus);
 

@@ -1,5 +1,5 @@
 const supabase = require("../../config/db");
-
+const { riderStatusConfig } = require("../../config/constant");
 const {
   cancelPetpujaOrder,
   sendRiderDetailsToPetPuja,
@@ -27,7 +27,14 @@ const riderWebhookController = async (req, res) => {
       });
     }
 
-    const allowedStatus = ["DISPATCHED", "DELIVERED", "CANCELLED"];
+    const allowedStatus = [
+      "ALLOTTED",
+      "ARRIVED",
+      "DISPATCHED",
+      "ARRIVED_CUSTOMER_DOORSTEP",
+      "DELIVERED",
+      "CANCELLED",
+    ];
 
     if (!allowedStatus.includes(status_code)) {
       console.log("⚠️ Unknown status_code:", status_code);
@@ -136,27 +143,26 @@ const riderWebhookController = async (req, res) => {
      */
     (async () => {
       try {
-        const safeName =
-          rider_name && rider_name !== "Not Provided"
-            ? rider_name
-            : "Not Provided";
+        const riderPayload = {
+          orderId: orderData.id,
+          taskId,
+        };
 
-        const safeContact =
-          rider_contact && rider_contact !== "Not Provided"
-            ? rider_contact
-            : "9999999999";
+        // add only if valid
+        if (rider_name && rider_name !== "Not Provided") {
+          riderPayload.rider_name = rider_name;
+        }
+
+        if (rider_contact && rider_contact !== "Not Provided") {
+          riderPayload.rider_contact = rider_contact;
+        }
 
         await sendRiderDetailsToPetPuja({
           status_code,
-          data: {
-            orderId: orderData.id,
-            taskId,
-            rider_name: safeName,
-            rider_contact: safeContact,
-          },
+          data: riderPayload,
         });
 
-        console.log("📤 Sent rider details to PetPooja");
+        console.log("📤 Sent rider details to PetPooja:", riderPayload);
       } catch (err) {
         console.error("❌ PetPooja rider update failed:", err.message);
       }
@@ -167,8 +173,13 @@ const riderWebhookController = async (req, res) => {
      */
     let updatedOrderStatus = null;
 
-    if (status_code === "DISPATCHED") updatedOrderStatus = "DISPATCHED";
-    if (status_code === "DELIVERED") updatedOrderStatus = "DELIVERED";
+    const riderStatus = riderStatusConfig();
+
+    if (status_code === riderStatus.DISPATCHED)
+      updatedOrderStatus = "DISPATCHED";
+
+    if (status_code === riderStatus.DELIVERED)
+      updatedOrderStatus = "DELIVERED";
 
     if (updatedOrderStatus) {
       await supabase

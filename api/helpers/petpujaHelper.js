@@ -6,7 +6,7 @@ const { riderStatusConfig } = require("../../config/constant");
 // axios instance for PetPooja
 const petpujaClient = axios.create({
   baseURL: process.env.PETPUJA_BASE_URL,
-  timeout: 30000,
+  timeout: 5000,
 });
 
 /**
@@ -113,15 +113,25 @@ const sendRiderDetailsToPetPuja = async (riderInfo) => {
     const outletId = await getOutletIdFromOrder(riderInfo.data.orderId);
     if (!outletId) return { success: false };
 
-    const safeName =
-      riderInfo.data.rider_name && riderInfo.data.rider_name !== "Not Provided"
-        ? riderInfo.data.rider_name
-        : "Not Provided";
 
-    const safeContact =
-      riderInfo.data.rider_contact && riderInfo.data.rider_contact !== "Not Provided"
-        ? riderInfo.data.rider_contact
-        : "9999999999";
+
+    const riderData = {};
+
+    // include only valid name
+    if (
+      riderInfo.data.rider_name &&
+      riderInfo.data.rider_name !== "Not Provided"
+    ) {
+      riderData.rider_name = riderInfo.data.rider_name;
+    }
+
+    // include only valid phone
+    if (
+      riderInfo.data.rider_contact &&
+      riderInfo.data.rider_contact !== "9999999999"
+    ) {
+      riderData.rider_phone_number = riderInfo.data.rider_contact;
+    }
 
     const payload = {
       app_key: process.env.APP_KEY,
@@ -130,12 +140,13 @@ const sendRiderDetailsToPetPuja = async (riderInfo) => {
       order_id: riderInfo.data.orderId,
       outlet_id: String(outletId),
       status,
-      rider_data: {
-        rider_name: safeName,
-        rider_phone_number: safeContact,
-      },
       external_order_id: "",
     };
+
+    // attach only if something valid exists
+    if (Object.keys(riderData).length > 0) {
+      payload.rider_data = riderData;
+    }
 
     console.log("📤 Sending rider update:", payload);
 
@@ -164,7 +175,7 @@ const riderStatusPetpujaStatusMapping = (riderStatus) => {
   if (riderStatusConst.DISPATCHED === riderStatus) return "pickedup";
   if (riderStatusConst.DELIVERED === riderStatus) return "delivered";
   if (riderStatusConst.CANCELLED === riderStatus) return -1;
-
+  if (riderStatus === "ARRIVED_CUSTOMER_DOORSTEP") return "pickedup";
   return "";
 };
 
