@@ -1,0 +1,54 @@
+name: Deploy to GCP
+
+on:
+  push:
+    branches:
+      - production        # triggers on push to main branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout the latest code
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2. Set up Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+
+      # 3. Install dependencies locally (optional - for build step)
+      - name: Install dependencies
+        run: npm install
+
+      # 4. Setup SSH key
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GCP_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.GCP_HOST }} >> ~/.ssh/known_hosts
+
+      # 5. Deploy to GCP via SSH
+      - name: Deploy to GCP
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.GCP_USERNAME }}@${{ secrets.GCP_HOST }} << 'EOF'
+            set -e
+
+            # Go to app folder
+            cd /appl
+
+            # Pull latest code from GitHub
+            git pull origin production
+
+            # Install/update dependencies
+            npm install --production
+
+            # Restart the app (using pm2 - see Step 4)
+            pm2 restart server.js --name "bongo-api" || pm2 start server.js --name "bongo-api"
+
+            echo "✅ Deployment successful!"
+          EOF

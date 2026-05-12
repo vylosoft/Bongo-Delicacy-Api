@@ -24,17 +24,11 @@ const hashPayload = (payload) =>
   crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 
 async function downloadImage(url) {
-  // Node 18+ has built-in fetch
   const res = await fetch(url);
-
-  if (!res.ok) {
-    throw new Error(`Image fetch failed: ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
 
   const type = res.headers.get("content-type") || "";
-  if (!type.startsWith("image/")) {
-    throw new Error("URL is not an image");
-  }
+  if (!type.startsWith("image/")) throw new Error("URL is not an image");
 
   return Buffer.from(await res.arrayBuffer());
 }
@@ -44,22 +38,13 @@ async function uploadImage(buffer, rest_id, itemid) {
 
   const { error } = await supabase.storage
     .from("menu-images")
-    .upload(path, buffer, {
-      contentType: "image/jpeg",
-      upsert: true,
-    });
+    .upload(path, buffer, { contentType: "image/jpeg", upsert: true });
 
   if (error) throw error;
 
-  return supabase.storage
-    .from("menu-images")
-    .getPublicUrl(path).data.publicUrl;
+  return supabase.storage.from("menu-images").getPublicUrl(path).data.publicUrl;
 }
 
-/**
- * Images are NOT stored in DB.
- * Only URLs inside payload are replaced.
- */
 async function persistMenuImages(payload, rest_id) {
   if (!Array.isArray(payload.items)) return payload;
 
@@ -84,48 +69,38 @@ async function persistMenuImages(payload, rest_id) {
 
 const pushMenuWebhook = async (req, res) => {
 
-  /* ---- 1. Log raw request FIRST — before anything else ---- */
-  let webhookLogId = null;
-  try {
-    const { data: logData } = await supabase
+  /* ---- 1. Log raw request — no try/catch ---- */
+  const { data: logData } = await supabase
+    .from("patpuja_manu_webhook")
+    .insert({
+      request_url: req.originalUrl || req.url,
+      request_body: req.body ?? null,
+      is_success: false,
+    })
+    .select("id")
+    .single();
+
+  const webhookLogId = logData?.id ?? null;
+
+  /* ---- Only updates the log row — response is handled by res.success / res.error ---- */
+  const updateLog = async (isSuccess, responseBody) => {
+    if (!webhookLogId) return;
+    await supabase
       .from("patpuja_manu_webhook")
-      .insert({
-        request_url : req.originalUrl || req.url,
-        request_body: req.body ?? null,
-        is_success  : false,          // updated once we know the outcome
+      .update({
+        response_body: responseBody,
+        is_success: isSuccess,
       })
-      .select("id")
-      .single();
-
-    webhookLogId = logData?.id ?? null;
-  } catch (logErr) {
-    // Never block the main flow if logging fails
-    console.error("patpuja_manu_webhook insert failed:", logErr.message);
-  }
-
-  /* Helper — send response and update log row in one call */
-  const respond = async (statusCode, body) => {
-    if (webhookLogId) {
-      try {
-        await supabase
-          .from("patpuja_manu_webhook")
-          .update({
-            response_body: body,
-            is_success   : statusCode >= 200 && statusCode < 300 && body?.ok === true,
-          })
-          .eq("id", webhookLogId);
-      } catch (updateErr) {
-        console.error("patpuja_manu_webhook update failed:", updateErr.message);
-      }
-    }
-    return res.status(statusCode).json(body);
+      .eq("id", webhookLogId);
   };
 
-  /* ---- 2. All original logic below — completely unchanged ---- */
+  /* ---- 2. Main logic ---- */
   try {
+      // throw new Error("TEST ERROR: intentional error to verify DB logging");
     const { error } = pushMenuSchema.validate(req.body);
     if (error) {
-      return respond(400, { ok: false, message: error.message });
+      await updateLog(false, { message: error.message });
+      return res.error({ message: error.message, status: 400 });
     }
 
     const rawPayload = req.body;
@@ -136,40 +111,34 @@ const pushMenuWebhook = async (req, res) => {
     const restaurantid = restaurant?.restaurantid;
 
     const rest_id = String(menusharingcode || restaurantid || "").trim();
-
     if (!rest_id) {
-      return respond(400, { ok: false, message: "rest_id not found" });
+      await updateLog(false, { message: "rest_id not found" });
+      return res.error({ message: "rest_id not found", status: 400 });
     }
 
     const restaurant_name = details.restaurantname || null;
     const latitude = details.latitude ? Number(details.latitude) : null;
     const longitude = details.longitude ? Number(details.longitude) : null;
     const restaurant_id = restaurantid ? String(restaurantid) : null;
-
     const isclosed = false;
     const now = new Date().toISOString();
 
     /* ---- check existing cache ---- */
-
     const { data: existing } = await supabase
       .from("petpooja_menu_cache")
       .select("version_hash")
       .eq("rest_id", rest_id)
       .maybeSingle();
 
-    const finalPayload = await persistMenuImages(
-      structuredClone(rawPayload),
-      rest_id,
-    );
-
+    const finalPayload = await persistMenuImages(structuredClone(rawPayload), rest_id);
     const finalHash = hashPayload(finalPayload);
 
     if (existing && existing.version_hash === finalHash) {
-      return respond(200, { ok: true, skipped: true, reason: "menu unchanged" });
+      await updateLog(true, { skipped: true, reason: "menu unchanged" });
+      return res.success({ data: { skipped: true, reason: "menu unchanged" } });
     }
 
     /* ---- ensure restaurant exists ---- */
-
     let supabase_resturent_id = null;
 
     const { data } = await supabase
@@ -179,14 +148,12 @@ const pushMenuWebhook = async (req, res) => {
       .single();
 
     if (!data) {
-      const resturentPayload = {
-        name: restaurant?.details?.restaurantname || "",
-        petpuja_resturant_id: restaurant.restaurantid,
-      };
-
       const resturentData = await supabase
         .from("restaurants")
-        .insert(resturentPayload)
+        .insert({
+          name: restaurant?.details?.restaurantname || "",
+          petpuja_resturant_id: restaurant.restaurantid,
+        })
         .select("id")
         .single();
 
@@ -196,25 +163,24 @@ const pushMenuWebhook = async (req, res) => {
     }
 
     /* ---- upsert outlet ---- */
-
-    const outletPayload = {
-      resturent_id    : supabase_resturent_id,
-      lat             : details.latitude,
-      long            : details.longitude,
-      is_active       : restaurant.active === "1",
-      petpooja_outlet_id: details.menusharingcode,
-      contact         : details.contact,
-      address         : details.address,
-      city            : details.city,
-      state           : details.state,
-    };
-
     await supabase
       .from("outlet")
-      .upsert(outletPayload, { onConflict: "petpooja_outlet_id" });
+      .upsert(
+        {
+          resturent_id: supabase_resturent_id,
+          lat: details.latitude,
+          long: details.longitude,
+          is_active: restaurant.active === "1",
+          petpooja_outlet_id: details.menusharingcode,
+          contact: details.contact,
+          address: details.address,
+          city: details.city,
+          state: details.state,
+        },
+        { onConflict: "petpooja_outlet_id" },
+      );
 
-    /* ---- cache menu ---- */
-
+    /* ---- cache menu in petpooja_menu_cache ---- */
     const { error: upsertError } = await supabase
       .from("petpooja_menu_cache")
       .upsert(
@@ -225,23 +191,27 @@ const pushMenuWebhook = async (req, res) => {
           latitude,
           longitude,
           isclosed,
-          payload        : finalPayload,
-          version_hash   : finalHash,
-          last_pushed_at : now,
-          updated_at     : now,
+          payload: finalPayload,
+          version_hash: finalHash,
+          last_pushed_at: now,
+          updated_at: now,
         },
         { onConflict: "rest_id" },
       );
 
     if (upsertError) {
       console.error("Cache upsert failed:", upsertError);
-      return respond(500, { ok: false });
+      await updateLog(false, { message: "Cache upsert failed" });
+      return res.error({ message: "Cache upsert failed", status: 500 });
     }
 
-    return respond(200, { ok: true });
+    await updateLog(true, { result: finalPayload, count: 1 });
+    return res.success({ data: { result: finalPayload, count: 1 } });
+
   } catch (err) {
     console.error("Webhook error:", err);
-    return respond(500, { ok: false });
+    await updateLog(false, { message: "Internal server error" });
+    return res.error({ message: "Internal server error", status: 500 });
   }
 };
 
@@ -252,31 +222,23 @@ const getCachedMenu = async (req, res) => {
     const rest_id = String(req.query.resturent_identifier || "").trim();
 
     if (!rest_id) {
-      return res.status(400).json({
-        ok: false,
-        message: "resturent_identifier required",
-      });
+      return res.error({ message: "resturent_identifier required", status: 400 });
     }
 
     const { data, error } = await supabase
       .from("petpooja_menu_cache")
-      .select(
-        "payload,last_pushed_at,version_hash,restaurant_name,latitude,longitude,isclosed",
-      )
+      .select("payload,last_pushed_at,version_hash,restaurant_name,latitude,longitude,isclosed")
       .eq("rest_id", rest_id)
       .maybeSingle();
 
     if (error || !data) {
-      return res.status(404).json({
-        ok: false,
-        message: "Menu not cached yet",
-      });
+      return res.error({ message: "Menu not cached yet", status: 404 });
     }
 
-    return res.status(200).json({ ok: true, data });
+    return res.success({ data: { result: data, count: 1 } });
   } catch (err) {
     console.error("getCachedMenu error:", err);
-    return res.status(500).json({ ok: false });
+    return res.error({ message: "Internal server error", status: 500 });
   }
 };
 
