@@ -39,4 +39,4 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o BatchMode=yes \
             ${{ secrets.GCP_USERNAME }}@${{ secrets.GCP_HOST }} \
-            "cd /app1 && git pull origin main && npm install --production && pm2 restart server.js --name 'bongo-api' || pm2 start server.js --name 'bongo-api' && echo 'Deployment successful!'"
+            "cd /appl && git pull origin main && npm install --production && pm2 restart server.js --name 'bongo-api' || pm2 start server.js --name 'bongo-api' && echo 'Deployment successful!'"
