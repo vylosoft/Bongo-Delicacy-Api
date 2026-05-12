@@ -35,20 +35,8 @@ jobs:
       # 5. Deploy to GCP via SSH
       - name: Deploy to GCP
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.GCP_USERNAME }}@${{ secrets.GCP_HOST }} << 'EOF'
-            set -e
-
-            # Go to app folder
-            cd /appl
-
-            # Pull latest code from GitHub
-            git pull origin production
-
-            # Install/update dependencies
-            npm install --production
-
-            # Restart the app (using pm2 - see Step 4)
-            pm2 restart server.js --name "bongo-api" || pm2 start server.js --name "bongo-api"
-
-            echo "✅ Deployment successful!"
-          EOF
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o BatchMode=yes \
+            ${{ secrets.GCP_USERNAME }}@${{ secrets.GCP_HOST }} \
+            "cd /app1 && git pull origin main && npm install --production && pm2 restart server.js --name 'bongo-api' || pm2 start server.js --name 'bongo-api' && echo 'Deployment successful!'"
