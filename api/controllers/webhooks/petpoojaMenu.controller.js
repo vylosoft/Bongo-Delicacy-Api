@@ -58,7 +58,7 @@ async function persistMenuImages(payload, rest_id) {
       const permanentUrl = await uploadImage(buffer, rest_id, item.itemid);
       item.item_image_url = permanentUrl;
     } catch (err) {
-      console.error(`Image failed for item ${item.itemid}:`, err.message);
+      console.error(`Image failed for item ${item?.itemid}:`, err?.message);
     }
   }
 
@@ -75,45 +75,29 @@ const pushMenuWebhook = async (req, res) => {
     .insert({
       request_url: req.originalUrl || req.url,
       request_body: req.body ?? null,
-      is_success: false,
+      is_success: true,
     })
     .select("id")
     .single();
-
+    
   const webhookLogId = logData?.id ?? null;
-
-  /* ---- Only updates the log row — response is handled by res.success / res.error ---- */
-  const updateLog = async (isSuccess, responseBody) => {
-    if (!webhookLogId) return;
-    await supabase
-      .from("patpuja_manu_webhook")
-      .update({
-        response_body: responseBody,
-        is_success: isSuccess,
-      })
-      .eq("id", webhookLogId);
-  };
-
-  /* ---- 2. Main logic ---- */
   try {
-      // throw new Error("TEST ERROR: intentional error to verify DB logging");
-    const { error } = pushMenuSchema.validate(req.body);
-    if (error) {
-      await updateLog(false, { message: error.message });
-      return res.error({ message: error.message, status: 400 });
-    }
-
     const rawPayload = req.body;
     const restaurant = rawPayload?.restaurants?.[0];
     const details = restaurant?.details || {};
 
-    const menusharingcode = details.menusharingcode;
+    const menusharingcode = details?.menusharingcode;
     const restaurantid = restaurant?.restaurantid;
 
     const rest_id = String(menusharingcode || restaurantid || "").trim();
     if (!rest_id) {
-      await updateLog(false, { message: "rest_id not found" });
-      return res.error({ message: "rest_id not found", status: 400 });
+       await supabase
+      .from("patpuja_manu_webhook")
+      .update({
+        is_success: false,
+        message: "Resturent id is missing"
+      })
+      .eq("id", webhookLogId);
     }
 
     const restaurant_name = details.restaurantname || null;
@@ -124,20 +108,8 @@ const pushMenuWebhook = async (req, res) => {
     const now = new Date().toISOString();
 
     /* ---- check existing cache ---- */
-    const { data: existing } = await supabase
-      .from("petpooja_menu_cache")
-      .select("version_hash")
-      .eq("rest_id", rest_id)
-      .maybeSingle();
 
     const finalPayload = await persistMenuImages(structuredClone(rawPayload), rest_id);
-    const finalHash = hashPayload(finalPayload);
-
-    if (existing && existing.version_hash === finalHash) {
-      await updateLog(true, { skipped: true, reason: "menu unchanged" });
-      return res.success({ data: { skipped: true, reason: "menu unchanged" } });
-    }
-
     /* ---- ensure restaurant exists ---- */
     let supabase_resturent_id = null;
 
@@ -181,37 +153,37 @@ const pushMenuWebhook = async (req, res) => {
       );
 
     /* ---- cache menu in petpooja_menu_cache ---- */
-    const { error: upsertError } = await supabase
+    const { error: deleteError } = await supabase
       .from("petpooja_menu_cache")
-      .upsert(
-        {
-          rest_id,
-          restaurant_id,
-          restaurant_name,
-          latitude,
-          longitude,
-          isclosed,
-          payload: finalPayload,
-          version_hash: finalHash,
-          last_pushed_at: now,
-          updated_at: now,
-        },
-        { onConflict: "rest_id" },
-      );
+      .delete()
+      .eq("rest_id", rest_id);
 
-    if (upsertError) {
-      console.error("Cache upsert failed:", upsertError);
-      await updateLog(false, { message: "Cache upsert failed" });
-      return res.error({ message: "Cache upsert failed", status: 500 });
-    }
-
-    await updateLog(true, { result: finalPayload, count: 1 });
-    return res.success({ data: { result: finalPayload, count: 1 } });
+    const { error: insertError } = await supabase
+      .from("petpooja_menu_cache")
+      .insert({
+        rest_id,
+        restaurant_id,
+        restaurant_name,
+        latitude,
+        longitude,
+        isclosed,
+        payload: finalPayload,
+        version_hash: finalHash,
+        last_pushed_at: now,
+        updated_at: now,
+      });
+    return res.success({ message : "Menu sync success." });
 
   } catch (err) {
     console.error("Webhook error:", err);
-    await updateLog(false, { message: "Internal server error" });
-    return res.error({ message: "Internal server error", status: 500 });
+    await supabase
+      .from("patpuja_manu_webhook")
+      .update({
+        is_success: false,
+        message: err.message
+      })
+      .eq("id", webhookLogId);
+    return res.success({ message : "Menu sync failed." });
   }
 };
 
