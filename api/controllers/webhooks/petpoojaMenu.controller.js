@@ -98,7 +98,7 @@ const pushMenuWebhook = async (req, res) => {
   /* ---- Log webhook ---- */
 
   const { data: logData } = await supabase
-    .from("patpuja_manu_webhook")
+    .from("patpuja_webhook_logs")
     .insert({
       request_url: req.originalUrl || req.url,
       request_body: req.body ?? null,
@@ -119,7 +119,7 @@ const pushMenuWebhook = async (req, res) => {
 
     if (validationError) {
       await supabase
-        .from("patpuja_manu_webhook")
+        .from("patpuja_webhook_logs")
         .update({
           is_success: false,
           message: validationError.message,
@@ -143,7 +143,7 @@ const pushMenuWebhook = async (req, res) => {
 
     if (!rest_id) {
       await supabase
-        .from("patpuja_manu_webhook")
+        .from("patpuja_webhook_logs")
         .update({
           is_success: false,
           message: "Restaurant id is missing",
@@ -291,7 +291,7 @@ const pushMenuWebhook = async (req, res) => {
     /* ---- Update webhook log success ---- */
 
     await supabase
-      .from("patpuja_manu_webhook")
+      .from("patpuja_webhook_logs")
       .update({
         is_success: true,
         message: "Menu sync success",
@@ -305,7 +305,7 @@ const pushMenuWebhook = async (req, res) => {
     console.error("Webhook error:", err);
 
     await supabase
-      .from("patpuja_manu_webhook")
+      .from("patpuja_webhook_logs")
       .update({
         is_success: false,
         message: err?.message || "Unknown error",
