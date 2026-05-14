@@ -71,15 +71,16 @@ const pushMenuWebhook = async (req, res) => {
 
   /* ---- 1. Log raw request — no try/catch ---- */
   const { data: logData } = await supabase
-    .from("patpuja_manu_webhook")
+    .from("patpuja_webhook_logs")
     .insert({
       request_url: req.originalUrl || req.url,
       request_body: req.body ?? null,
       is_success: true,
+      type: 'API'
     })
     .select("id")
     .single();
-    
+
   const webhookLogId = logData?.id ?? null;
   try {
     const rawPayload = req.body;
@@ -91,13 +92,13 @@ const pushMenuWebhook = async (req, res) => {
 
     const rest_id = String(menusharingcode || restaurantid || "").trim();
     if (!rest_id) {
-       await supabase
-      .from("patpuja_manu_webhook")
-      .update({
-        is_success: false,
-        message: "Resturent id is missing"
-      })
-      .eq("id", webhookLogId);
+      await supabase
+        .from("patpuja_webhook_logs")
+        .update({
+          is_success: false,
+          message: "Resturent id is missing"
+        })
+        .eq("id", webhookLogId);
     }
 
     const restaurant_name = details.restaurantname || null;
@@ -172,18 +173,18 @@ const pushMenuWebhook = async (req, res) => {
         last_pushed_at: now,
         updated_at: now,
       });
-    return res.success({ message : "Menu sync success." });
+    return res.success({ message: "Menu sync success." });
 
   } catch (err) {
     console.error("Webhook error:", err);
     await supabase
-      .from("patpuja_manu_webhook")
+      .from("patpuja_webhook_logs")
       .update({
         is_success: false,
         message: err.message
       })
       .eq("id", webhookLogId);
-    return res.success({ message : "Menu sync failed." });
+    return res.success({ message: "Menu sync failed." });
   }
 };
 
