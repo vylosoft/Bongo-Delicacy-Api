@@ -31,7 +31,7 @@ exports.itemStockWebhook = async (req, res) => {
     .insert({
       request_url: req.originalUrl || req.url,
       request_body: req.body ?? null,
-      webhook_type: "item_stock",
+      type: "WEBHOOK",
       is_success: true,
     })
     .select("id")

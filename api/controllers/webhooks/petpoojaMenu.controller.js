@@ -103,6 +103,7 @@ const pushMenuWebhook = async (req, res) => {
       request_url: req.originalUrl || req.url,
       request_body: req.body ?? null,
       is_success: true,
+      type:"WEBHOOK"
     })
     .select("id")
     .single();
