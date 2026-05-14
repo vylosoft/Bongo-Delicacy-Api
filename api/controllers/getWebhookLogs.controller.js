@@ -12,7 +12,7 @@ const getAllMenuWebhookLogs = async (req, res) => {
     const is_success = req.query.is_success; // "true" | "false"
 
     let query = supabase
-      .from("patpuja_manu_webhook")
+      .from("patpuja_webhook_logs")
       .select("id, created_at, request_url, request_body, response_body, is_success", { count: "exact" })
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
