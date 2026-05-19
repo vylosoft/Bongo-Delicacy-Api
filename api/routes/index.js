@@ -17,4 +17,5 @@ router.use("/deli", require("./webhooks.routes.js"));
 router.use("/outlet-table", require("./outletTable.route.js"));
 router.use("/otp", require("./otp.routes.js"));
 router.use("/delivery-charge", require("./deliveryCharge.routes"));
+router.use("/delivery-points", require("./deliveryPoints.routes"));
 module.exports = router;

@@ -420,7 +420,12 @@ exports.fetchAdminMenuWithCategory = async (req, res) => {
       const itemWithAvail = applyAvailability(item, stockMap);
 
       // ✅ Expand addon references
-    const expandedAddons = expandItemAddons(itemWithAvail, addonGroupMap);
+      const expandedAddons = expandItemAddons(itemWithAvail, addonGroupMap);
+
+      return {
+        ...itemWithAvail,
+        addons: expandedAddons, // ✅ NEW: Full addon details
+      };
     });
 
     const data = categories.map((cat) => ({
