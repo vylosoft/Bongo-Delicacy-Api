@@ -103,7 +103,7 @@ const pushMenuWebhook = async (req, res) => {
       request_url: req.originalUrl || req.url,
       request_body: req.body ?? null,
       is_success: true,
-      type:"WEBHOOK"
+      type: "WEBHOOK",
     })
     .select("id")
     .single();
@@ -128,18 +128,26 @@ const pushMenuWebhook = async (req, res) => {
         .eq("id", webhookLogId);
 
       return res.success({
-        message: "Invalid webhook payload",
+        message: "Webhook received",
       });
     }
 
-    const restaurant = rawPayload?.restaurants?.[0];
-    const details = restaurant?.details || {};
+    const restaurant =
+      rawPayload?.restaurants?.[0];
 
-    const menusharingcode = details?.menusharingcode;
-    const restaurantid = restaurant?.restaurantid;
+    const details =
+      restaurant?.details || {};
+
+    const menusharingcode =
+      details?.menusharingcode;
+
+    const restaurantid =
+      restaurant?.restaurantid;
 
     const rest_id = String(
-      menusharingcode || restaurantid || "",
+      menusharingcode ||
+      restaurantid ||
+      ""
     ).trim();
 
     if (!rest_id) {
@@ -147,76 +155,92 @@ const pushMenuWebhook = async (req, res) => {
         .from("patpuja_webhook_logs")
         .update({
           is_success: false,
-          message: "Restaurant id is missing",
+          message:
+            "Restaurant id missing",
         })
         .eq("id", webhookLogId);
 
       return res.success({
-        message: "Restaurant id missing.",
+        message: "Webhook received",
       });
     }
 
     const restaurant_name =
       details.restaurantname || null;
 
-    const latitude = details.latitude
-      ? Number(details.latitude)
-      : null;
+    const latitude =
+      details.latitude
+        ? Number(details.latitude)
+        : null;
 
-    const longitude = details.longitude
-      ? Number(details.longitude)
-      : null;
+    const longitude =
+      details.longitude
+        ? Number(details.longitude)
+        : null;
 
-    const restaurant_id = restaurantid
-      ? String(restaurantid)
-      : null;
+    const restaurant_id =
+      restaurantid
+        ? String(restaurantid)
+        : null;
 
     const isclosed = false;
 
-    const now = new Date().toISOString();
+    const now =
+      new Date().toISOString();
 
-    /* ---- Process images ---- */
+    /* ---- Process Images ---- */
 
     const finalPayload =
       await persistMenuImages(
-        structuredClone(rawPayload),
-        rest_id,
+        structuredClone(
+          rawPayload
+        ),
+        rest_id
       );
 
-    /* ---- Generate hash ---- */
+    /* ---- Generate Hash ---- */
 
-    const finalHash = hashPayload(finalPayload);
+    const finalHash =
+      hashPayload(finalPayload);
 
     /* ---- Ensure restaurant exists ---- */
 
-    let supabase_resturent_id = null;
+    let supabase_resturent_id =
+      null;
 
-    const { data: existingRestaurant } =
-      await supabase
-        .from("restaurants")
-        .select("id")
-        .eq(
-          "petpuja_resturant_id",
-          restaurant.restaurantid,
-        )
-        .single();
+    const {
+      data:
+        existingRestaurant,
+    } = await supabase
+      .from("restaurants")
+      .select("id")
+      .eq(
+        "petpuja_resturant_id",
+        restaurant.restaurantid
+      )
+      .single();
 
     if (!existingRestaurant) {
-      const { data: insertedRestaurant, error } =
-        await supabase
-          .from("restaurants")
-          .insert({
-            name:
-              restaurant?.details?.restaurantname || "",
-            petpuja_resturant_id:
-              restaurant.restaurantid,
-          })
-          .select("id")
-          .single();
+      const {
+        data:
+          insertedRestaurant,
+        error,
+      } = await supabase
+        .from("restaurants")
+        .insert({
+          name:
+            restaurant
+              ?.details
+              ?.restaurantname ||
+            "",
+          petpuja_resturant_id:
+            restaurant.restaurantid,
+        })
+        .select("id")
+        .single();
 
-      if (error) {
+      if (error)
         throw error;
-      }
 
       supabase_resturent_id =
         insertedRestaurant.id;
@@ -227,94 +251,214 @@ const pushMenuWebhook = async (req, res) => {
 
     /* ---- Upsert outlet ---- */
 
-    const { error: outletError } =
-      await supabase
-        .from("outlet")
-        .upsert(
-          {
-            resturent_id:
-              supabase_resturent_id,
-            lat: details.latitude,
-            long: details.longitude,
-            is_active:
-              restaurant.active === "1",
-            petpooja_outlet_id:
-              details.menusharingcode,
-            contact: details.contact,
-            address: details.address,
-            city: details.city,
-            state: details.state,
-          },
-          {
-            onConflict:
-              "petpooja_outlet_id",
-          },
-        );
+    const {
+      error:
+        outletError,
+    } = await supabase
+      .from("outlet")
+      .upsert(
+        {
+          resturent_id:
+            supabase_resturent_id,
+          lat:
+            details.latitude,
+          long:
+            details.longitude,
+          is_active:
+            restaurant.active ===
+            "1",
+          petpooja_outlet_id:
+            details.menusharingcode,
+          contact:
+            details.contact,
+          address:
+            details.address,
+          city:
+            details.city,
+          state:
+            details.state,
+        },
+        {
+          onConflict:
+            "petpooja_outlet_id",
+        }
+      );
 
-    if (outletError) {
+    if (outletError)
       throw outletError;
-    }
 
     /* ---- Delete old cache ---- */
 
-    const { error: deleteError } =
-      await supabase
-        .from("petpooja_menu_cache")
-        .delete()
-        .eq("rest_id", rest_id);
+    const {
+      error:
+        deleteError,
+    } = await supabase
+      .from(
+        "petpooja_menu_cache"
+      )
+      .delete()
+      .eq(
+        "rest_id",
+        rest_id
+      );
 
-    if (deleteError) {
+    if (deleteError)
       throw deleteError;
-    }
 
     /* ---- Insert fresh cache ---- */
 
-    const { error: insertError } =
-      await supabase
-        .from("petpooja_menu_cache")
-        .insert({
-          rest_id,
-          restaurant_id,
-          restaurant_name,
-          latitude,
-          longitude,
-          isclosed,
-          payload: finalPayload,
-          version_hash: finalHash,
-          last_pushed_at: now,
-          updated_at: now,
-        });
+    const {
+      error:
+        insertError,
+    } = await supabase
+      .from(
+        "petpooja_menu_cache"
+      )
+      .insert({
+        rest_id,
+        restaurant_id,
+        restaurant_name,
+        latitude,
+        longitude,
+        isclosed,
+        payload:
+          finalPayload,
+        version_hash:
+          finalHash,
+        last_pushed_at:
+          now,
+        updated_at:
+          now,
+      });
 
-    if (insertError) {
+    if (insertError)
       throw insertError;
+
+    /* ---- Verify cache exists ---- */
+
+    const {
+      data:
+        insertedCache,
+      error:
+        verifyError,
+    } = await supabase
+      .from(
+        "petpooja_menu_cache"
+      )
+      .select(
+        "id,rest_id"
+      )
+      .eq(
+        "rest_id",
+        rest_id
+      )
+      .order(
+        "created_at",
+        {
+          ascending:
+            false,
+        }
+      )
+      .limit(1)
+      .single();
+
+    if (verifyError)
+      throw verifyError;
+
+    /* ---- Delete stock only after cache verified ---- */
+
+    if (
+      insertedCache &&
+      insertedCache.rest_id ===
+        rest_id
+    ) {
+      const {
+        error:
+          stockDeleteError,
+      } = await supabase
+        .from(
+          "menu_item_stock"
+        )
+        .delete()
+        .eq(
+          "rest_id",
+          rest_id
+        );
+
+      if (
+        stockDeleteError
+      ) {
+        console.error(
+          "Stock delete error:",
+          stockDeleteError.message
+        );
+
+        await supabase
+          .from(
+            "patpuja_webhook_logs"
+          )
+          .update({
+            is_success:
+              false,
+            message:
+              stockDeleteError.message,
+          })
+          .eq(
+            "id",
+            webhookLogId
+          );
+      }
+
+      console.log(
+        `Deleted stock for ${rest_id}`
+      );
     }
 
-    /* ---- Update webhook log success ---- */
+    /* ---- Update success log ---- */
 
     await supabase
-      .from("patpuja_webhook_logs")
+      .from(
+        "patpuja_webhook_logs"
+      )
       .update({
         is_success: true,
-        message: "Menu sync success",
+        message:
+          "Menu sync success",
       })
-      .eq("id", webhookLogId);
+      .eq(
+        "id",
+        webhookLogId
+      );
 
     return res.success({
-      message: "Menu sync success.",
+      message:
+        "Webhook received",
     });
+
   } catch (err) {
-    console.error("Webhook error:", err);
+    console.error(
+      "Webhook error:",
+      err
+    );
 
     await supabase
-      .from("patpuja_webhook_logs")
+      .from(
+        "patpuja_webhook_logs"
+      )
       .update({
         is_success: false,
-        message: err?.message || "Unknown error",
+        message:
+          err?.message ||
+          "Unknown error",
       })
-      .eq("id", webhookLogId);
+      .eq(
+        "id",
+        webhookLogId
+      );
 
     return res.success({
-      message: "Menu sync failed.",
+      message:
+        "Webhook received",
     });
   }
 };
