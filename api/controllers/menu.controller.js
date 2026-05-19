@@ -156,7 +156,9 @@ const getStockMap = async (rest_id) => {
   try {
     const { data, error } = await supabase
       .from("menu_item_stock")
-      .select("item_id,in_stock")
+      .select(
+        "item_id,in_stock,turn_on_time",
+      )
       .eq("rest_id", String(rest_id));
 
     if (error) {
@@ -164,7 +166,16 @@ const getStockMap = async (rest_id) => {
       return new Map();
     }
 
-    return new Map((data || []).map((r) => [String(r.item_id), String(r.in_stock)]));
+   return new Map(
+  (data || []).map((r) => [
+    String(r.item_id),
+    {
+      in_stock: String(r.in_stock),
+      turn_on_time:
+        r.turn_on_time || null,
+    },
+  ]),
+);
   } catch (e) {
     console.error("getStockMap error:", e);
     return new Map();
@@ -172,17 +183,41 @@ const getStockMap = async (rest_id) => {
 };
 
 // attach availability to item, without removing it
-const applyAvailability = (item, stockMap) => {
-  const ppItemId = String(item.itemid);
-  const override = stockMap.get(ppItemId); // "0" or "1" or undefined
+const applyAvailability = (
+  item,
+  stockMap,
+) => {
+  const ppItemId = String(
+    item.itemid,
+  );
+
+  const stockData =
+    stockMap.get(ppItemId);
+
+  const override =
+    stockData?.in_stock;
+
+  const turn_on_time =
+    stockData?.turn_on_time ||
+    null;
 
   // default = available
-  const isAvailable = override ? override !== "0" : true;
+  const isAvailable = override
+    ? override !== "0"
+    : true;
 
   return {
     ...item,
+
     available: isAvailable,
-    active: isAvailable ? item.active : "0",
+
+    in_stock: override || "1",
+
+    turn_on_time,
+
+    active: isAvailable
+      ? item.active
+      : "0",
   };
 };
 
@@ -308,20 +343,40 @@ exports.fetchMenuByCatagory = async (req, res) => {
         : +(basePrice + gst_total_amount).toFixed(2);
 
       // ✅ Expand addon references
-      const expandedAddons = expandItemAddons(
-        itemWithAvailability,
-        addonGroupMap,
-      );
+    const expandedAddons = expandItemAddons(
+  itemWithAvailability,
+  addonGroupMap,
+);
 
-      return {
-        ...itemWithAvailability,
-        base_price: +basePrice.toFixed(2),
-        tax_breakup,
-        gst_total_percentage: +gst_total_percentage.toFixed(2),
-        gst_total_amount,
-        price_with_gst,
-        addons: expandedAddons, // ✅ NEW: Full addon details
-      };
+/**
+ * ADD THIS
+ */
+const variationsWithAddons = (
+  itemWithAvailability.variation || []
+).map((variation) => ({
+  ...variation,
+
+  addons: expandItemAddons(
+    variation,
+    addonGroupMap,
+  ),
+}));
+
+return {
+  ...itemWithAvailability,
+
+  /**
+   * ADD THIS
+   */
+  variation: variationsWithAddons,
+
+  base_price: +basePrice.toFixed(2),
+  tax_breakup,
+  gst_total_percentage: +gst_total_percentage.toFixed(2),
+  gst_total_amount,
+  price_with_gst,
+  addons: expandedAddons,
+};
     });
 
     return res.success({ data: result });
@@ -365,12 +420,7 @@ exports.fetchAdminMenuWithCategory = async (req, res) => {
       const itemWithAvail = applyAvailability(item, stockMap);
 
       // ✅ Expand addon references
-      const expandedAddons = expandItemAddons(itemWithAvail, addonGroupMap);
-
-      return {
-        ...itemWithAvail,
-        addons: expandedAddons, // ✅ NEW: Full addon details
-      };
+    const expandedAddons = expandItemAddons(itemWithAvail, addonGroupMap);
     });
 
     const data = categories.map((cat) => ({

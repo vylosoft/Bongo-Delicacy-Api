@@ -24,6 +24,7 @@
     "express-rate-limit": "^8.2.1",
     "joi": "^18.0.2",
     "multer": "^2.0.2",
+    "node-cron": "^4.2.1",
     "pg": "^8.16.3",
     "pg-hstore": "^2.3.4",
     "razorpay": "^2.9.6",

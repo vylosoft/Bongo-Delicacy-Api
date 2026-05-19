@@ -300,7 +300,7 @@ const pushMenuWebhook = async (req, res) => {
       .eq("id", webhookLogId);
 
     return res.success({
-      message: "Menu sync success.",
+      message: "Menu sync success.",v
     });
   } catch (err) {
     console.error("Webhook error:", err);

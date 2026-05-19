@@ -10,6 +10,14 @@ const itemStockSchema = Joi.object({
 
   inStock: Joi.boolean().required(),
 
+  autoTurnOnTime: Joi.string()
+    .optional()
+    .allow(null),
+
+  customTurnOnTime: Joi.string()
+    .optional()
+    .allow(null),
+
   itemID: Joi.array()
     .items(
       Joi.alternatives().try(
@@ -23,21 +31,30 @@ const itemStockSchema = Joi.object({
 
 /* -------------------- WEBHOOK -------------------- */
 
-exports.itemStockWebhook = async (req, res) => {
+exports.itemStockWebhook = async (
+  req,
+  res,
+) => {
   /* ---- Store raw webhook log first ---- */
 
-  const { data: logData } = await supabase
-    .from("patpuja_webhook_logs")
-    .insert({
-      request_url: req.originalUrl || req.url,
-      request_body: req.body ?? null,
-      type: "WEBHOOK",
-      is_success: true,
-    })
-    .select("id")
-    .single();
+  const { data: logData } =
+    await supabase
+      .from("patpuja_webhook_logs")
+      .insert({
+        request_url:
+          req.originalUrl || req.url,
 
-  const webhookLogId = logData?.id ?? null;
+        request_body: req.body ?? null,
+
+        type: "WEBHOOK",
+
+        is_success: true,
+      })
+      .select("id")
+      .single();
+
+  const webhookLogId =
+    logData?.id ?? null;
 
   try {
     const rawPayload = req.body;
@@ -45,14 +62,19 @@ exports.itemStockWebhook = async (req, res) => {
     /* ---- Validate payload ---- */
 
     const { error: validationError } =
-      itemStockSchema.validate(rawPayload);
+      itemStockSchema.validate(
+        rawPayload,
+      );
 
     if (validationError) {
       await supabase
         .from("patpuja_webhook_logs")
         .update({
           is_success: false,
-          message: validationError.message,
+
+          message:
+            validationError.message,
+
           response_body: {
             success: false,
             message: "Invalid payload",
@@ -66,10 +88,17 @@ exports.itemStockWebhook = async (req, res) => {
       });
     }
 
-    const { restID, inStock, itemID } =
-      rawPayload;
+    const {
+      restID,
+      inStock,
+      itemID,
+      autoTurnOnTime,
+      customTurnOnTime,
+    } = rawPayload;
 
-    const rest_id = String(restID).trim();
+    const rest_id = String(
+      restID,
+    ).trim();
 
     /* ---- Delete old stock rows first ---- */
 
@@ -80,7 +109,9 @@ exports.itemStockWebhook = async (req, res) => {
         .eq("rest_id", rest_id)
         .in(
           "item_id",
-          itemID.map((id) => String(id)),
+          itemID.map((id) =>
+            String(id),
+          ),
         );
 
     if (deleteError) {
@@ -91,9 +122,23 @@ exports.itemStockWebhook = async (req, res) => {
 
     const rows = itemID.map((id) => ({
       rest_id: rest_id,
+
       item_id: String(id),
+
       in_stock: inStock ? "1" : "0",
-      updated_at: new Date().toISOString(),
+
+      turn_on_time:
+        !inStock &&
+        autoTurnOnTime ===
+          "custom" &&
+        customTurnOnTime
+          ? new Date(
+              customTurnOnTime,
+            ).toISOString()
+          : null,
+
+      updated_at:
+        new Date().toISOString(),
     }));
 
     /* ---- Insert fresh rows ---- */
@@ -113,8 +158,10 @@ exports.itemStockWebhook = async (req, res) => {
       .from("patpuja_webhook_logs")
       .update({
         is_success: true,
+
         message:
           "Item stock sync success",
+
         response_body: {
           success: true,
           saved: rows,
@@ -140,8 +187,11 @@ exports.itemStockWebhook = async (req, res) => {
       .from("patpuja_webhook_logs")
       .update({
         is_success: false,
+
         message:
-          e?.message || "Unknown error",
+          e?.message ||
+          "Unknown error",
+
         response_body: {
           success: false,
           message: "Internal error",
