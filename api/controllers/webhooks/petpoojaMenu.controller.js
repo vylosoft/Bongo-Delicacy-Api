@@ -73,394 +73,206 @@ async function persistMenuImages(payload, rest_id) {
 
     try {
       const buffer = await downloadImage(item.item_image_url);
-
-      const permanentUrl = await uploadImage(
-        buffer,
-        rest_id,
-        item.itemid,
-      );
-
+      const permanentUrl = await uploadImage(buffer, rest_id, item.itemid);
       item.item_image_url = permanentUrl;
     } catch (err) {
-      console.error(
-        `Image failed for item ${item?.itemid}:`,
-        err?.message,
-      );
+      console.error(`Image failed for item ${item?.itemid}:`, err?.message);
     }
   }
 
   return payload;
 }
 
-/* -------------------- WEBHOOK -------------------- */
+/* -------------------- BACKGROUND PROCESSOR -------------------- */
 
-const pushMenuWebhook = async (req, res) => {
-  /* ---- Log webhook ---- */
-
-  const { data: logData } = await supabase
-    .from("patpuja_webhook_logs")
-    .insert({
-      request_url: req.originalUrl || req.url,
-      request_body: req.body ?? null,
-      is_success: true,
-      type: "WEBHOOK",
-    })
-    .select("id")
-    .single();
-
-  const webhookLogId = logData?.id ?? null;
-
+const processMenuWebhook = async (rawPayload, webhookLogId) => {
   try {
-    const rawPayload = req.body;
-
-    /* ---- Validation ---- */
-
-    const { error: validationError } =
-      pushMenuSchema.validate(rawPayload);
+    // ---- Validation ----
+    const { error: validationError } = pushMenuSchema.validate(rawPayload);
 
     if (validationError) {
-      await supabase
+      return await supabase
         .from("patpuja_webhook_logs")
         .update({
           is_success: false,
           message: validationError.message,
         })
         .eq("id", webhookLogId);
-
-      return res.success({
-        message: "Webhook received",
-      });
     }
 
-    const restaurant =
-      rawPayload?.restaurants?.[0];
-
-    const details =
-      restaurant?.details || {};
-
-    const menusharingcode =
-      details?.menusharingcode;
-
-    const restaurantid =
-      restaurant?.restaurantid;
-
-    const rest_id = String(
-      menusharingcode ||
-      restaurantid ||
-      ""
-    ).trim();
+    const restaurant      = rawPayload?.restaurants?.[0];
+    const details         = restaurant?.details || {};
+    const menusharingcode = details?.menusharingcode;
+    const restaurantid    = restaurant?.restaurantid;
+    const rest_id         = String(menusharingcode || restaurantid || "").trim();
 
     if (!rest_id) {
-      await supabase
+      return await supabase
         .from("patpuja_webhook_logs")
         .update({
           is_success: false,
-          message:
-            "Restaurant id missing",
+          message: "Restaurant id missing",
         })
         .eq("id", webhookLogId);
-
-      return res.success({
-        message: "Webhook received",
-      });
     }
 
-    const restaurant_name =
-      details.restaurantname || null;
+    const restaurant_name = details.restaurantname || null;
+    const latitude        = details.latitude  ? Number(details.latitude)  : null;
+    const longitude       = details.longitude ? Number(details.longitude) : null;
+    const restaurant_id   = restaurantid ? String(restaurantid) : null;
+    const now             = new Date().toISOString();
 
-    const latitude =
-      details.latitude
-        ? Number(details.latitude)
-        : null;
+    // ---- Process Images ----
+    const finalPayload = await persistMenuImages(structuredClone(rawPayload), rest_id);
 
-    const longitude =
-      details.longitude
-        ? Number(details.longitude)
-        : null;
+    // ---- Generate Hash ----
+    const finalHash = hashPayload(finalPayload);
 
-    const restaurant_id =
-      restaurantid
-        ? String(restaurantid)
-        : null;
+    // ---- Ensure restaurant exists ----
+    let supabase_resturent_id = null;
 
-    const isclosed = false;
-
-    const now =
-      new Date().toISOString();
-
-    /* ---- Process Images ---- */
-
-    const finalPayload =
-      await persistMenuImages(
-        structuredClone(
-          rawPayload
-        ),
-        rest_id
-      );
-
-    /* ---- Generate Hash ---- */
-
-    const finalHash =
-      hashPayload(finalPayload);
-
-    /* ---- Ensure restaurant exists ---- */
-
-    let supabase_resturent_id =
-      null;
-
-    const {
-      data:
-        existingRestaurant,
-    } = await supabase
+    const { data: existingRestaurant } = await supabase
       .from("restaurants")
       .select("id")
-      .eq(
-        "petpuja_resturant_id",
-        restaurant.restaurantid
-      )
+      .eq("petpuja_resturant_id", restaurantid)
       .single();
 
     if (!existingRestaurant) {
-      const {
-        data:
-          insertedRestaurant,
-        error,
-      } = await supabase
+      const { data: insertedRestaurant, error } = await supabase
         .from("restaurants")
         .insert({
-          name:
-            restaurant
-              ?.details
-              ?.restaurantname ||
-            "",
-          petpuja_resturant_id:
-            restaurant.restaurantid,
+          name: details.restaurantname || "",
+          petpuja_resturant_id: restaurantid,
         })
         .select("id")
         .single();
 
-      if (error)
-        throw error;
+      if (error) throw error;
 
-      supabase_resturent_id =
-        insertedRestaurant.id;
+      supabase_resturent_id = insertedRestaurant.id;
     } else {
-      supabase_resturent_id =
-        existingRestaurant.id;
+      supabase_resturent_id = existingRestaurant.id;
     }
 
-    /* ---- Upsert outlet ---- */
-
-    const {
-      error:
-        outletError,
-    } = await supabase
+    // ---- Upsert outlet ----
+    const { error: outletError } = await supabase
       .from("outlet")
       .upsert(
         {
-          resturent_id:
-            supabase_resturent_id,
-          lat:
-            details.latitude,
-          long:
-            details.longitude,
-          is_active:
-            restaurant.active ===
-            "1",
-          petpooja_outlet_id:
-            details.menusharingcode,
-          contact:
-            details.contact,
-          address:
-            details.address,
-          city:
-            details.city,
-          state:
-            details.state,
+          resturent_id:       supabase_resturent_id,
+          lat:                details.latitude,
+          long:               details.longitude,
+          is_active:          restaurant.active === "1",
+          petpooja_outlet_id: details.menusharingcode,
+          contact:            details.contact,
+          address:            details.address,
+          city:               details.city,
+          state:              details.state,
         },
-        {
-          onConflict:
-            "petpooja_outlet_id",
-        }
+        { onConflict: "petpooja_outlet_id" }
       );
 
-    if (outletError)
-      throw outletError;
+    if (outletError) throw outletError;
 
-    /* ---- Delete old cache ---- */
-
-    const {
-      error:
-        deleteError,
-    } = await supabase
-      .from(
-        "petpooja_menu_cache"
-      )
+    // ---- Delete old cache ----
+    const { error: deleteError } = await supabase
+      .from("petpooja_menu_cache")
       .delete()
-      .eq(
-        "rest_id",
-        rest_id
-      );
+      .eq("rest_id", rest_id);
 
-    if (deleteError)
-      throw deleteError;
+    if (deleteError) throw deleteError;
 
-    /* ---- Insert fresh cache ---- */
-
-    const {
-      error:
-        insertError,
-    } = await supabase
-      .from(
-        "petpooja_menu_cache"
-      )
+    // ---- Insert fresh cache ----
+    const { error: insertError } = await supabase
+      .from("petpooja_menu_cache")
       .insert({
         rest_id,
         restaurant_id,
         restaurant_name,
         latitude,
         longitude,
-        isclosed,
-        payload:
-          finalPayload,
-        version_hash:
-          finalHash,
-        last_pushed_at:
-          now,
-        updated_at:
-          now,
+        isclosed: false,
+        payload:        finalPayload,
+        version_hash:   finalHash,
+        last_pushed_at: now,
+        updated_at:     now,
       });
 
-    if (insertError)
-      throw insertError;
+    if (insertError) throw insertError;
 
-    /* ---- Verify cache exists ---- */
-
-    const {
-      data:
-        insertedCache,
-      error:
-        verifyError,
-    } = await supabase
-      .from(
-        "petpooja_menu_cache"
-      )
-      .select(
-        "id,rest_id"
-      )
-      .eq(
-        "rest_id",
-        rest_id
-      )
-      .order(
-        "created_at",
-        {
-          ascending:
-            false,
-        }
-      )
+    // ---- Verify cache exists ----
+    const { data: insertedCache, error: verifyError } = await supabase
+      .from("petpooja_menu_cache")
+      .select("id, rest_id")
+      .eq("rest_id", rest_id)
+      .order("created_at", { ascending: false })
       .limit(1)
       .single();
 
-    if (verifyError)
-      throw verifyError;
+    if (verifyError) throw verifyError;
 
-    /* ---- Delete stock only after cache verified ---- */
-
-    if (
-      insertedCache &&
-      insertedCache.rest_id ===
-        rest_id
-    ) {
-      const {
-        error:
-          stockDeleteError,
-      } = await supabase
-        .from(
-          "menu_item_stock"
-        )
+    // ---- Delete stock only after cache verified ----
+    if (insertedCache?.rest_id === rest_id) {
+      const { error: stockDeleteError } = await supabase
+        .from("menu_item_stock")
         .delete()
-        .eq(
-          "rest_id",
-          rest_id
-        );
+        .eq("rest_id", rest_id);
 
-      if (
-        stockDeleteError
-      ) {
-        console.error(
-          "Stock delete error:",
-          stockDeleteError.message
-        );
-
-        await supabase
-          .from(
-            "patpuja_webhook_logs"
-          )
-          .update({
-            is_success:
-              false,
-            message:
-              stockDeleteError.message,
-          })
-          .eq(
-            "id",
-            webhookLogId
-          );
+      if (stockDeleteError) {
+        console.error("Stock delete error:", stockDeleteError.message);
       }
 
-      console.log(
-        `Deleted stock for ${rest_id}`
-      );
+      console.log(`Deleted stock for ${rest_id}`);
     }
 
-    /* ---- Update success log ---- */
-
+    // ---- Mark success ----
     await supabase
-      .from(
-        "patpuja_webhook_logs"
-      )
+      .from("patpuja_webhook_logs")
       .update({
         is_success: true,
-        message:
-          "Menu sync success",
+        message: "Menu sync success",
       })
-      .eq(
-        "id",
-        webhookLogId
-      );
-
-    return res.success({
-      message:
-        "Webhook received",
-    });
+      .eq("id", webhookLogId);
 
   } catch (err) {
-    console.error(
-      "Webhook error:",
-      err
-    );
+    console.error("processMenuWebhook error:", err);
 
     await supabase
-      .from(
-        "patpuja_webhook_logs"
-      )
+      .from("patpuja_webhook_logs")
       .update({
         is_success: false,
-        message:
-          err?.message ||
-          "Unknown error",
+        message: err?.message || "Unknown error",
       })
-      .eq(
-        "id",
-        webhookLogId
-      );
-
-    return res.success({
-      message:
-        "Webhook received",
-    });
+      .eq("id", webhookLogId);
   }
+};
+
+/* -------------------- WEBHOOK -------------------- */
+
+const pushMenuWebhook = async (req, res) => {
+  // ---- Log webhook immediately ----
+  const { data: logData } = await supabase
+    .from("patpuja_webhook_logs")
+    .insert({
+      request_url:   req.originalUrl || req.url,
+      request_body:  req.body ?? null,
+      response_body: { success: "1", message: "Menu items are successfully listed." },
+      is_success:    true,
+      type:          "WEBHOOK",
+    })
+    .select("id")
+    .single();
+
+  // ---- Fire and forget ----
+  processMenuWebhook(req.body, logData?.id).catch((err) =>
+    console.error("Background processing error:", err)
+  );
+
+  // ---- Respond to Petpooja immediately ----
+  return res.status(200).json({
+    success: "1",
+    message: "Menu items are successfully listed.",
+  });
 };
 
 /* -------------------- GET CACHED MENU -------------------- */
@@ -478,22 +290,19 @@ const getCachedMenu = async (req, res) => {
       });
     }
 
-    const { data, error } =
-      await supabase
-        .from("petpooja_menu_cache")
-        .select(
-          `
-          payload,
-          last_pushed_at,
-          version_hash,
-          restaurant_name,
-          latitude,
-          longitude,
-          isclosed
-        `,
-        )
-        .eq("rest_id", rest_id)
-        .maybeSingle();
+    const { data, error } = await supabase
+      .from("petpooja_menu_cache")
+      .select(`
+        payload,
+        last_pushed_at,
+        version_hash,
+        restaurant_name,
+        latitude,
+        longitude,
+        isclosed
+      `)
+      .eq("rest_id", rest_id)
+      .maybeSingle();
 
     if (error || !data) {
       return res.error({
@@ -509,10 +318,7 @@ const getCachedMenu = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error(
-      "getCachedMenu error:",
-      err,
-    );
+    console.error("getCachedMenu error:", err);
 
     return res.error({
       message: "Internal server error",
