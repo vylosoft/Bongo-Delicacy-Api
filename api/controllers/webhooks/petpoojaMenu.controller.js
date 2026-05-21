@@ -46,7 +46,6 @@ async function uploadImage(buffer, rest_id, itemid) {
 
 async function persistMenuImages(payload, rest_id) {
   if (!Array.isArray(payload.items)) return payload;
-
   for (const item of payload.items) {
     if (!item.itemid || !item.item_image_url) continue;
     if (item.item_image_url.includes("supabase")) continue;
@@ -57,14 +56,10 @@ async function persistMenuImages(payload, rest_id) {
       console.error(`Image failed for item ${item?.itemid}:`, err?.message);
     }
   }
-
   return payload;
 }
 
 /* -------------------- LOG HELPER -------------------- */
-
-// is_success: true  → response_body = { success: "1", message: "..." }
-// is_success: false → response_body = { success: "0", error: "exact error message" }
 
 async function updateLog(webhookLogId, { is_success, message }) {
   if (!webhookLogId) return;
@@ -88,32 +83,40 @@ async function updateLog(webhookLogId, { is_success, message }) {
 
 const pushMenuWebhook = async (req, res) => {
 
-  // ── Respond to Petpooja IMMEDIATELY — before anything else ───────────────
-  res.status(200).json(PETPOOJA_RESPONSE);
-
-  // ── Log raw incoming request ──────────────────────────────────────────────
+  // ── STEP 1: Insert log row FIRST (before responding) ─────────────────────
+  // This guarantees the row exists regardless of what happens next
   let webhookLogId = null;
 
   try {
-    const { data: logData } = await supabase
+    const { data: logData, error: logError } = await supabase
       .from("patpuja_webhook_logs")
       .insert({
         request_url:   req.originalUrl || req.url,
         request_body:  req.body ?? null,
-        response_body: PETPOOJA_RESPONSE,  // what we sent back to Petpooja
-        is_success:    null,               // null = still processing
+        response_body: PETPOOJA_RESPONSE,
+        is_success:    null,
         message:       "Processing started",
         type:          "WEBHOOK",
       })
       .select("id")
       .single();
 
+    if (logError) {
+      // Log to console so you can see it in server logs
+      console.error("CRITICAL — webhook log insert failed:", logError);
+    }
+
     webhookLogId = logData?.id ?? null;
+    console.log("Webhook log created, id:", webhookLogId);
+
   } catch (logInsertErr) {
-    console.error("Failed to insert webhook log:", logInsertErr?.message);
+    console.error("CRITICAL — webhook log insert threw:", logInsertErr?.message);
   }
 
-  // ── Process in background after response already sent ────────────────────
+  // ── STEP 2: Respond to Petpooja immediately ───────────────────────────────
+  res.status(200).json(PETPOOJA_RESPONSE);
+
+  // ── STEP 3: Process in background ────────────────────────────────────────
   try {
     const rawPayload = req.body;
 
