@@ -1,7 +1,9 @@
 const Joi = require("joi");
 const supabase = require("../../../config/db");
 
-/* -------------------- VALIDATION -------------------- */
+/* ─────────────────────────────────────────
+   VALIDATION
+───────────────────────────────────────── */
 
 const itemStockSchema = Joi.object({
   restID: Joi.alternatives()
@@ -19,191 +21,173 @@ const itemStockSchema = Joi.object({
     .allow(null),
 
   itemID: Joi.array()
-    .items(
-      Joi.alternatives().try(
-        Joi.string(),
-        Joi.number(),
-      ),
-    )
+    .items(Joi.alternatives().try(Joi.string(), Joi.number()))
     .min(1)
     .required(),
 }).unknown(true);
 
-/* -------------------- WEBHOOK -------------------- */
+/* ─────────────────────────────────────────
+   HELPER — Parse Petpooja's IST time → UTC
+   Petpooja sends customTurnOnTime as IST
+   e.g. "2026-05-21 16:26:00" (which means
+   4:26 PM IST = 10:56 AM UTC)
+   We append +05:30 before parsing.
+───────────────────────────────────────── */
 
-exports.itemStockWebhook = async (
-  req,
-  res,
-) => {
-  /* ---- Store raw webhook log first ---- */
-
-  const { data: logData } =
-    await supabase
-      .from("patpuja_webhook_logs")
-      .insert({
-        request_url:
-          req.originalUrl || req.url,
-
-        request_body: req.body ?? null,
-
-        type: "WEBHOOK",
-
-        is_success: true,
-      })
-      .select("id")
-      .single();
-
-  const webhookLogId =
-    logData?.id ?? null;
+function parseISTtoUTC(istString) {
+  if (!istString) return null;
 
   try {
-    const rawPayload = req.body;
+    // Already has timezone info — trust it
+    if (
+      istString.includes("+") ||
+      istString.includes("Z") ||
+      istString.endsWith("z")
+    ) {
+      return new Date(istString).toISOString();
+    }
 
-    /* ---- Validate payload ---- */
+    // Petpooja sends bare datetime without tz — treat as IST
+    const withTz = istString.trim().replace(" ", "T") + "+05:30";
+    const parsed = new Date(withTz);
 
-    const { error: validationError } =
-      itemStockSchema.validate(
-        rawPayload,
-      );
+    if (isNaN(parsed.getTime())) {
+      console.error("[itemStockWebhook] Invalid turn_on_time:", istString);
+      return null;
+    }
+
+    return parsed.toISOString(); // stored as UTC in DB
+  } catch (e) {
+    console.error("[itemStockWebhook] parseISTtoUTC error:", e.message);
+    return null;
+  }
+}
+
+/* ─────────────────────────────────────────
+   BACKGROUND PROCESSOR
+───────────────────────────────────────── */
+
+async function processItemStock(rawPayload, webhookLogId) {
+  try {
+    /* ── Validate ── */
+
+    const { error: validationError } = itemStockSchema.validate(rawPayload);
 
     if (validationError) {
       await supabase
         .from("patpuja_webhook_logs")
         .update({
           is_success: false,
-
-          message:
-            validationError.message,
-
-          response_body: {
-            success: false,
-            message: "Invalid payload",
-          },
+          message:    validationError.message,
+          response_body: { success: false, message: "Invalid payload" },
         })
         .eq("id", webhookLogId);
 
-      return res.json({
-        success: true,
-        message: "Webhook received",
-      });
+      return;
     }
 
-    const {
-      restID,
-      inStock,
-      itemID,
-      autoTurnOnTime,
-      customTurnOnTime,
-    } = rawPayload;
+    const { restID, inStock, itemID, autoTurnOnTime, customTurnOnTime } =
+      rawPayload;
 
-    const rest_id = String(
-      restID,
-    ).trim();
+    const rest_id = String(restID).trim();
 
-    /* ---- Delete old stock rows first ---- */
+    /* ── Resolve turn_on_time ──
+       Only set when item is marked OUT of stock AND
+       autoTurnOnTime === "custom" AND customTurnOnTime is provided.
+       Always convert from IST → UTC before storing.
+    ── */
 
-    const { error: deleteError } =
-      await supabase
-        .from("menu_item_stock")
-        .delete()
-        .eq("rest_id", rest_id)
-        .in(
-          "item_id",
-          itemID.map((id) =>
-            String(id),
-          ),
-        );
+    const turn_on_time_utc =
+      !inStock && autoTurnOnTime === "custom" && customTurnOnTime
+        ? parseISTtoUTC(customTurnOnTime)
+        : null;
 
-    if (deleteError) {
-      throw deleteError;
-    }
+    /* ── Delete old stock rows for these items ── */
 
-    /* ---- Prepare fresh rows ---- */
+    const { error: deleteError } = await supabase
+      .from("menu_item_stock")
+      .delete()
+      .eq("rest_id", rest_id)
+      .in(
+        "item_id",
+        itemID.map((id) => String(id)),
+      );
+
+    if (deleteError) throw deleteError;
+
+    /* ── Build fresh rows ── */
 
     const rows = itemID.map((id) => ({
-      rest_id: rest_id,
-
-      item_id: String(id),
-
-      in_stock: inStock ? "1" : "0",
-
-      turn_on_time:
-        !inStock &&
-        autoTurnOnTime ===
-          "custom" &&
-        customTurnOnTime
-          ? new Date(
-              customTurnOnTime,
-            ).toISOString()
-          : null,
-
-      updated_at:
-        new Date().toISOString(),
+      rest_id:      rest_id,
+      item_id:      String(id),
+      in_stock:     inStock ? "1" : "0",
+      turn_on_time: turn_on_time_utc,
+      updated_at:   new Date().toISOString(),
     }));
 
-    /* ---- Insert fresh rows ---- */
+    /* ── Insert fresh rows ── */
 
-    const { error: insertError } =
-      await supabase
-        .from("menu_item_stock")
-        .insert(rows);
+    const { error: insertError } = await supabase
+      .from("menu_item_stock")
+      .insert(rows);
 
-    if (insertError) {
-      throw insertError;
-    }
+    if (insertError) throw insertError;
 
-    /* ---- Update success log ---- */
+    /* ── Update log as success ── */
 
     await supabase
       .from("patpuja_webhook_logs")
       .update({
-        is_success: true,
-
-        message:
-          "Item stock sync success",
-
-        response_body: {
-          success: true,
-          saved: rows,
-        },
+        is_success:    true,
+        message:       "Item stock sync success",
+        response_body: { success: true, saved: rows },
       })
       .eq("id", webhookLogId);
 
-    /* ---- Always success response to PetPooja ---- */
-
-    return res.json({
-      success: true,
-      message: "Webhook received",
-    });
   } catch (e) {
-    console.error(
-      "itemStockWebhook error:",
-      e,
-    );
-
-    /* ---- Store internal error in logs ---- */
+    console.error("[itemStockWebhook] processItemStock error:", e.message);
 
     await supabase
       .from("patpuja_webhook_logs")
       .update({
-        is_success: false,
-
-        message:
-          e?.message ||
-          "Unknown error",
-
-        response_body: {
-          success: false,
-          message: "Internal error",
-        },
+        is_success:    false,
+        message:       e?.message || "Unknown error",
+        response_body: { success: false, message: "Internal error" },
       })
       .eq("id", webhookLogId);
-
-    /* ---- Never return error to PetPooja ---- */
-
-    return res.json({
-      success: true,
-      message: "Webhook received",
-    });
   }
+}
+
+/* ─────────────────────────────────────────
+   WEBHOOK HANDLER
+───────────────────────────────────────── */
+
+exports.itemStockWebhook = async (req, res) => {
+  const petpoojaResponse = { success: "1", message: "Stock updated successfully." };
+
+  /* ── Log immediately ── */
+
+  const { data: logData } = await supabase
+    .from("patpuja_webhook_logs")
+    .insert({
+      request_url:   req.originalUrl || req.url,
+      request_body:  req.body ?? null,
+      response_body: petpoojaResponse,
+      type:          "WEBHOOK",
+      is_success:    true,
+    })
+    .select("id")
+    .single();
+
+  const webhookLogId = logData?.id ?? null;
+
+  /* ── Fire and forget ── */
+
+  processItemStock(req.body, webhookLogId).catch((e) =>
+    console.error("[itemStockWebhook] Background error:", e.message),
+  );
+
+  /* ── Respond to Petpooja immediately ── */
+
+  return res.status(200).json(petpoojaResponse);
 };

@@ -1,161 +1,59 @@
 const cron = require("node-cron");
-
 const supabase = require("../../config/db");
 
-/* ---------------------------------------
-   RUN EVERY MINUTE
---------------------------------------- */
+/* ─────────────────────────────────────────
+   Stock Expiry Cron
+   Runs every 15 seconds.
+   Finds items where in_stock = "0" and
+   turn_on_time has passed (UTC comparison),
+   then resets them to in_stock = "1".
+───────────────────────────────────────── */
 
-cron.schedule("* * * * *", async () => {
+cron.schedule("*/15 * * * * *", async () => {
   try {
-    console.log(
-      "Running stock expiry cron..."
-    );
+    const now = new Date().toISOString(); // UTC
 
-    /* ---------------------------------------
-       Fetch unavailable items
-    --------------------------------------- */
+    /* ── Fetch all out-of-stock items with a turn_on_time ── */
 
-    const { data, error } =
-      await supabase
-        .from("menu_item_stock")
-        .select("*")
-        .eq("in_stock", "0")
-        .not(
-          "turn_on_time",
-          "is",
-          null
-        );
+    const { data, error } = await supabase
+      .from("menu_item_stock")
+      .select("id, item_id, rest_id, turn_on_time")
+      .eq("in_stock", "0")
+      .not("turn_on_time", "is", null)
+      .lte("turn_on_time", now); // turn_on_time <= now (pure UTC)
 
     if (error) {
-      console.error(
-        "Cron fetch error:",
-        error
-      );
-
+      console.error("[StockCron] Fetch error:", error.message);
       return;
     }
 
-    /* ---------------------------------------
-       Convert current time to IST
-    --------------------------------------- */
-
-    const now = new Date(
-      new Date().toLocaleString(
-        "en-US",
-        {
-          timeZone:
-            "Asia/Kolkata",
-        }
-      )
-    );
-
-    console.log(
-      "Current IST:",
-      now
-    );
-
-    /* ---------------------------------------
-       Filter expired items
-    --------------------------------------- */
-
-    const expiredItems = (
-      data || []
-    ).filter((item) => {
-      const turnOnTime =
-        new Date(
-          new Date(
-            item.turn_on_time
-          ).toLocaleString(
-            "en-US",
-            {
-              timeZone:
-                "Asia/Kolkata",
-            }
-          )
-        );
-
-      console.log(
-        "Item:",
-        item.id,
-        "DB Time:",
-        turnOnTime
-      );
-
-      return (
-        turnOnTime <= now
-      );
-    });
-
-    console.log(
-      "Expired Items:",
-      expiredItems
-    );
-
-    /* ---------------------------------------
-       No expired items
-    --------------------------------------- */
-
-    if (!expiredItems.length) {
-      console.log(
-        "No expired items found"
-      );
-
-      return;
+    if (!data || data.length === 0) {
+      return; // nothing to do
     }
 
-    /* ---------------------------------------
-       Extract IDs
-    --------------------------------------- */
+    const ids = data.map((item) => item.id);
 
-    const ids =
-      expiredItems.map(
-        (item) =>
-          item.id
-      );
+    console.log(`[StockCron] Resetting ${ids.length} expired item(s):`, ids);
 
-    console.log(
-      "Resetting IDs:",
-      ids
-    );
+    /* ── Reset expired items ── */
 
-    /* ---------------------------------------
-       Reset stock
-    --------------------------------------- */
-
-    const {
-      error: updateError,
-    } = await supabase
-      .from(
-        "menu_item_stock"
-      )
+    const { error: updateError } = await supabase
+      .from("menu_item_stock")
       .update({
-        in_stock: "1",
+        in_stock:     "1",
         turn_on_time: null,
-        updated_at:
-          new Date().toISOString(),
+        updated_at:   new Date().toISOString(),
       })
-      .in(
-        "id",
-        ids
-      );
+      .in("id", ids);
 
     if (updateError) {
-      console.error(
-        "Update Error:",
-        updateError
-      );
-
+      console.error("[StockCron] Update error:", updateError.message);
       return;
     }
 
-    console.log(
-      `Successfully reset ${ids.length} items`
-    );
+    console.log(`[StockCron] Successfully reset ${ids.length} item(s)`);
+
   } catch (e) {
-    console.error(
-      "Cron Fatal Error:",
-      e
-    );
+    console.error("[StockCron] Fatal error:", e.message);
   }
 });
