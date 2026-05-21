@@ -20,7 +20,7 @@ const pushMenuSchema = Joi.object({
 
 /* -------------------- CONSTANTS -------------------- */
 
-const WEBHOOK_RESPONSE = { message: "Webhook received" };
+const PETPOOJA_RESPONSE = { success: "1", message: "Webhook received" };
 
 /* -------------------- HELPERS -------------------- */
 
@@ -61,46 +61,70 @@ async function persistMenuImages(payload, rest_id) {
   return payload;
 }
 
+/* -------------------- LOG HELPER -------------------- */
+
+// is_success: true  → response_body = { success: "1", message: "..." }
+// is_success: false → response_body = { success: "0", error: "exact error message" }
+
+async function updateLog(webhookLogId, { is_success, message }) {
+  if (!webhookLogId) return;
+  try {
+    await supabase
+      .from("patpuja_webhook_logs")
+      .update({
+        is_success,
+        message,
+        response_body: is_success
+          ? { success: "1", message }
+          : { success: "0", error: message },
+      })
+      .eq("id", webhookLogId);
+  } catch (logErr) {
+    console.error("Log update failed:", logErr?.message);
+  }
+}
+
 /* -------------------- WEBHOOK -------------------- */
 
 const pushMenuWebhook = async (req, res) => {
 
-  /* ---- Capture full request immediately ---- */
-  const { data: logData } = await supabase
-    .from("patpuja_webhook_logs")
-    .insert({
-      request_url:   req.originalUrl || req.url,
-      request_body:  req.body ?? null,
-      response_body: WEBHOOK_RESPONSE,   // pre-filled; always what we return
-      is_success:    true,
-      type:          "WEBHOOK",
-    })
-    .select("id")
-    .single();
+  // ── Respond to Petpooja IMMEDIATELY — before anything else ───────────────
+  res.status(200).json(PETPOOJA_RESPONSE);
 
-  const webhookLogId = logData?.id ?? null;
+  // ── Log raw incoming request ──────────────────────────────────────────────
+  let webhookLogId = null;
 
-  /* ---- Single exit point — always responds 200 to webhook ---- */
-  const done = async (patch = {}) => {
-    if (webhookLogId) {
-      await supabase
-        .from("patpuja_webhook_logs")
-        .update({ response_body: WEBHOOK_RESPONSE, ...patch })
-        .eq("id", webhookLogId);
-    }
-    return res.success(WEBHOOK_RESPONSE);
-  };
+  try {
+    const { data: logData } = await supabase
+      .from("patpuja_webhook_logs")
+      .insert({
+        request_url:   req.originalUrl || req.url,
+        request_body:  req.body ?? null,
+        response_body: PETPOOJA_RESPONSE,  // what we sent back to Petpooja
+        is_success:    null,               // null = still processing
+        message:       "Processing started",
+        type:          "WEBHOOK",
+      })
+      .select("id")
+      .single();
 
+    webhookLogId = logData?.id ?? null;
+  } catch (logInsertErr) {
+    console.error("Failed to insert webhook log:", logInsertErr?.message);
+  }
+
+  // ── Process in background after response already sent ────────────────────
   try {
     const rawPayload = req.body;
 
     /* ---- Validation ---- */
     const { error: validationError } = pushMenuSchema.validate(rawPayload);
     if (validationError) {
-      return done({
+      await updateLog(webhookLogId, {
         is_success: false,
-        message: `Validation failed: ${validationError.message}`,
+        message:    `Validation failed: ${validationError.message}`,
       });
+      return;
     }
 
     /* ---- Extract identifiers ---- */
@@ -111,7 +135,11 @@ const pushMenuWebhook = async (req, res) => {
     const rest_id         = String(menusharingcode || restaurantid || "").trim();
 
     if (!rest_id) {
-      return done({ is_success: false, message: "Restaurant id missing" });
+      await updateLog(webhookLogId, {
+        is_success: false,
+        message:    "Restaurant id missing — neither menusharingcode nor restaurantid found",
+      });
+      return;
     }
 
     const restaurant_name = details.restaurantname || null;
@@ -120,7 +148,7 @@ const pushMenuWebhook = async (req, res) => {
     const restaurant_id   = restaurantid ? String(restaurantid) : null;
     const now             = new Date().toISOString();
 
-    /* ---- Process images (failures are non-fatal, logged internally) ---- */
+    /* ---- Process images ---- */
     const finalPayload = await persistMenuImages(structuredClone(rawPayload), rest_id);
     const finalHash    = hashPayload(finalPayload);
 
@@ -169,7 +197,7 @@ const pushMenuWebhook = async (req, res) => {
 
     if (outletError) throw outletError;
 
-    /* ---- Replace cache (delete → insert) ---- */
+    /* ---- Replace cache ---- */
     const { error: deleteError } = await supabase
       .from("petpooja_menu_cache")
       .delete()
@@ -194,7 +222,7 @@ const pushMenuWebhook = async (req, res) => {
 
     if (insertError) throw insertError;
 
-    /* ---- Verify cache was written before clearing stock ---- */
+    /* ---- Verify cache written ---- */
     const { data: insertedCache, error: verifyError } = await supabase
       .from("petpooja_menu_cache")
       .select("id, rest_id")
@@ -205,7 +233,7 @@ const pushMenuWebhook = async (req, res) => {
 
     if (verifyError) throw verifyError;
 
-    /* ---- Clear old stock (non-fatal) ---- */
+    /* ---- Clear old stock ---- */
     if (insertedCache?.rest_id === rest_id) {
       const { error: stockDeleteError } = await supabase
         .from("menu_item_stock")
@@ -213,23 +241,26 @@ const pushMenuWebhook = async (req, res) => {
         .eq("rest_id", rest_id);
 
       if (stockDeleteError) {
-        console.error("Stock delete error:", stockDeleteError.message);
-        // Log warning but still treat overall sync as success
-        return done({
+        await updateLog(webhookLogId, {
           is_success: false,
-          message: `Menu synced but stock clear failed: ${stockDeleteError.message}`,
+          message:    `Menu synced OK but stock clear failed: ${stockDeleteError.message}`,
         });
+        return;
       }
-
-      console.log(`Stock cleared for ${rest_id}`);
     }
 
-    /* ---- All steps completed ---- */
-    return done({ is_success: true, message: "Menu sync success" });
+    /* ---- Success ---- */
+    await updateLog(webhookLogId, {
+      is_success: true,
+      message:    `Menu sync success for rest_id: ${rest_id}`,
+    });
 
   } catch (err) {
-    console.error("Webhook error:", err);
-    return done({ is_success: false, message: err?.message || "Unknown error" });
+    console.error("Webhook processing error:", err);
+    await updateLog(webhookLogId, {
+      is_success: false,
+      message:    err?.message || "Unknown error",
+    });
   }
 };
 
