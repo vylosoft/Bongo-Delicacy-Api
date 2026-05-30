@@ -3,7 +3,7 @@ const {
   fetchResturentByMappingIdSchema,
   addResturentSchema,
   addResturentTableSchema,
-  updateResturent,
+  updateResturent,  
   imageUploadSchema,
 } = require("../validations/resturent.validation");
 const { petpujaService } = require("../../utils/petpujaService");
@@ -13,7 +13,7 @@ const { RESTAURANT_BUCKET_NAME } = require("../../config/env.js");
 
 const getAll = async (req, res) => {
   try {
-    const payload = {
+    const payload = { 
       ...req.query
     };
     const { value, error } = getAllSchema(payload);
