@@ -157,7 +157,7 @@ const processMenuWebhook = async (rawPayload, webhookLogId) => {
     // ---- Upsert outlet ----
     const { error: outletError } = await supabase
       .from("outlet")
-      .upsert(
+      .upsert( 
         {
           resturent_id:       supabase_resturent_id,
           lat:                details.latitude,
