@@ -159,7 +159,7 @@ const processMenuWebhook = async (rawPayload, webhookLogId) => {
       .from("outlet")
       .upsert( 
         {
-          resturent_id:       supabase_resturent_id,
+          resturent_id:       supabase_resturent_id, 
           lat:                details.latitude,
           long:               details.longitude,
           is_active:          restaurant.active === "1",
