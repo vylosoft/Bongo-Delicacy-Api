@@ -27,7 +27,7 @@ cron.schedule("*/15 * * * * *", async () => {
       return;
     }
 
-    if (!data || data.length === 0) {
+    if (!data || data.length === 0) { 
       return; // nothing to do
     }
 
