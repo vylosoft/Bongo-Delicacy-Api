@@ -13,7 +13,7 @@ cron.schedule("*/15 * * * * *", async () => {
   try {
     const now = new Date().toISOString(); // UTC
 
-    /* ── Fetch all out-of-stock items with a turn_on_time ── */
+    /* ── Fetch all out-of-stock items with a turn_on_time ── */ 
 
     const { data, error } = await supabase
       .from("menu_item_stock")
