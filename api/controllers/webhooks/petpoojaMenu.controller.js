@@ -154,20 +154,14 @@ const processMenuWebhook = async (rawPayload, webhookLogId) => {
       supabase_resturent_id = existingRestaurant.id;
     }
 
-    // ---- Upsert outlet ----
+    // ---- Upsert outlet — only sync is_active, do NOT overwrite admin-managed fields ----
     const { error: outletError } = await supabase
       .from("outlet")
-      .upsert( 
+      .upsert(
         {
-          resturent_id:       supabase_resturent_id, 
-          lat:                details.latitude,
-          long:               details.longitude,
+          resturent_id:       supabase_resturent_id,
           is_active:          restaurant.active === "1",
           petpooja_outlet_id: details.menusharingcode,
-          contact:            details.contact,
-          address:            details.address,
-          city:               details.city,
-          state:              details.state,
         },
         { onConflict: "petpooja_outlet_id" }
       );

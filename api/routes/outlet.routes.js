@@ -5,12 +5,22 @@ const multer = require("multer");
 const upload = multer({ storage: multer.memoryStorage() });
 
 const outletController = require("../controllers/outlet.controller");
+const outletTimingsController = require("../controllers/outlet_timings.controller");
 
 // ==========================
 // ✅ NORMAL APIs
 // ==========================
 router.get("/", outletController.getAll);
 router.get("/getbylocation", outletController.getByLocation);
+
+// ==========================
+// ✅ TIMINGS APIs
+// ==========================
+router.get("/:outlet_id/timings/status", outletTimingsController.getCurrentStatus);
+router.get("/:outlet_id/timings", outletTimingsController.getTimings);
+router.post("/:outlet_id/timings", outletTimingsController.saveTimings);
+router.patch("/:outlet_id/timings/toggle-day", outletTimingsController.toggleDay);
+router.post("/:outlet_id/timings/copy-to-all", outletTimingsController.copyToAllDays);
 
 // ==========================
 // ✅ NEW (ADD THIS)

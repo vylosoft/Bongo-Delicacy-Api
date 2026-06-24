@@ -2,7 +2,7 @@ const router = require("express").Router();
 
 router.use("/menu", require("./menu.routes"));
 router.use("/brand", require("./brand.routes"));
-router.use("/brand-outlet", require("./brandOutlet.routes"));   // ✅ NEW
+router.use("/brand-outlet", require("./brandOutlet.routes"));
 router.use("/resturents", require("./resturents.route"));
 router.use("/outlet", require("./outlet.routes.js"));
 router.use("/location", require("./location.routes.js"));
@@ -18,4 +18,5 @@ router.use("/outlet-table", require("./outletTable.route.js"));
 router.use("/otp", require("./otp.routes.js"));
 router.use("/delivery-charge", require("./deliveryCharge.routes"));
 router.use("/delivery-points", require("./deliveryPoints.routes"));
+router.use("/discount", require("./discount.routes"));   // ✅ NEW
 module.exports = router;
