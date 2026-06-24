@@ -11,7 +11,7 @@ const supabase = require("../../config/db");
 
 cron.schedule("*/15 * * * * *", async () => {
   try {
-    const now = new Date().toISOString(); // UTC
+    const now = new Date().toISOString(); // UTC 
 
     /* ── Fetch all out-of-stock items with a turn_on_time ── */ 
 
