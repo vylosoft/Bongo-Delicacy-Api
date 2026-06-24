@@ -16,4 +16,4 @@ router.delete("/:uuid", deleteDiscount);   // ✅ NEW
 router.post("/apply", applyDiscount);
 router.post("/claim", claimDiscount);
 
-module.exports = router;
+module.exports = router; 
