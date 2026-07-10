@@ -231,7 +231,7 @@ const createDeliveryTaskFromOrder = async (data) => {
         contact_number: data.customer.phone,
         latitude: parseFloat(data.delivery_address.coordinates.lat),
         longitude: parseFloat(data.delivery_address.coordinates.lng),
-        address: data.customer.address,
+        address: data.customer.address, 
         city: data.customer.city,
         state: data.customer.state,
       },
