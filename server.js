@@ -1,4 +1,5 @@
 require("./api/cron/resetExpiredStock");
+require("./api/cron/StoreAutoOn.cron"); // add this line
 const app = require('./app');
 const env = require('./config/env');
 

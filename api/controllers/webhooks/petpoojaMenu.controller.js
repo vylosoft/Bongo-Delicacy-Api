@@ -2,6 +2,101 @@ const Joi = require("joi");
 const crypto = require("crypto");
 const supabase = require("../../../config/db");
 
+/* -------------------- NORMALIZED TABLE SYNC -------------------- */
+
+async function syncMenuTables(finalPayload, rest_id, restaurant_id) {
+  const categories = Array.isArray(finalPayload.categories) ? finalPayload.categories : [];
+  const items      = Array.isArray(finalPayload.items) ? finalPayload.items : [];
+  const now        = new Date().toISOString();
+
+  // ---- categories ----
+  if (categories.length) {
+    const categoryRows = categories.map((c) => ({
+      rest_id,
+      category_id: String(c.categoryid),
+      category_name: c.categoryname || null,
+      category_rank: c.categoryrank || null,
+      active: c.active || "1",
+      updated_at: now,
+    }));
+
+    const { error: catError } = await supabase
+      .from("menu_categories")
+      .upsert(categoryRows, { onConflict: "rest_id,category_id" });
+
+    if (catError) throw catError;
+  }
+
+  // ---- metadata: taxes + addon groups (needed for tax/addon expansion downstream) ----
+  const { error: metaError } = await supabase
+    .from("menu_metadata")
+    .upsert(
+      {
+        rest_id,
+        taxes: finalPayload.taxes || [],
+        addongroups: finalPayload.addongroups || [],
+        updated_at: now,
+      },
+      { onConflict: "rest_id" },
+    );
+
+  if (metaError) throw metaError;
+
+  // ---- items: smart diff via hash, upsert only, soft-delete anything missing ----
+  const incomingIds = new Set();
+  const rows = [];
+
+  for (const item of items) {
+    if (!item.itemid) continue;
+
+    const item_id = String(item.itemid);
+    incomingIds.add(item_id);
+
+    rows.push({
+      rest_id,
+      restaurant_id,
+      category_id: String(item.item_categoryid || ""),
+      item_id,
+      item_hash: crypto.createHash("sha256").update(JSON.stringify(item)).digest("hex"),
+      item_payload: item,
+      active: item.active || "1",
+      is_deleted: false,
+      updated_at: now,
+    });
+  }
+
+  if (rows.length) {
+    const { error: itemsError } = await supabase
+      .from("menu_items")
+      .upsert(rows, { onConflict: "rest_id,item_id" });
+
+    if (itemsError) throw itemsError;
+  }
+
+  // ---- soft-delete items that vanished from this push ----
+  const { data: existingItems, error: existingError } = await supabase
+    .from("menu_items")
+    .select("item_id")
+    .eq("rest_id", rest_id)
+    .eq("is_deleted", false);
+
+  if (existingError) throw existingError;
+
+  const staleIds = (existingItems || [])
+    .map((r) => r.item_id)
+    .filter((id) => !incomingIds.has(id));
+
+  if (staleIds.length) {
+    const { error: softDeleteError } = await supabase
+      .from("menu_items")
+      .update({ is_deleted: true, updated_at: now })
+      .eq("rest_id", rest_id)
+      .in("item_id", staleIds);
+
+    if (softDeleteError) throw softDeleteError;
+  }
+}
+
 /* -------------------- VALIDATION -------------------- */
 
 const pushMenuSchema = Joi.object({
@@ -127,6 +222,9 @@ const processMenuWebhook = async (rawPayload, webhookLogId) => {
 
     // ---- Generate Hash ----
     const finalHash = hashPayload(finalPayload);
+
+    // ---- Sync normalized tables (menu_categories, menu_items, menu_metadata) ----
+    await syncMenuTables(finalPayload, rest_id, restaurant_id);
 
     // ---- Ensure restaurant exists ----
     let supabase_resturent_id = null;

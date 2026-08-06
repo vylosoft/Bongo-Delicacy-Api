@@ -8,9 +8,11 @@ const {
 const supabase = require("../../config/db");
 const crypto = require("crypto");
 
-/**
- * Hash payload (used if we do fallback-to-live and want to cache it)
- */
+/* -------------------- QUIZ TAG CONSTANTS -------------------- */
+
+const CUISINE_TAGS = ["pure_veg", "authentic_bengali", "indo_chinese", "biryani"];
+const MOOD_TAGS    = ["light", "spicy", "comfort", "special"];
+
 /**
  * Build a map: addon_group_id -> full addon group details
  */
@@ -19,14 +21,14 @@ const buildAddonGroupMap = (addonGroups) => {
 
   return new Map(
     addonGroups.map((group) => [
-      String(group.addongroupid), // ✅ FIXED
+      String(group.addongroupid),
       {
         addon_group_id: String(group.addongroupid),
         addon_group_name: String(group.addongroup_name || ""),
         addon_group_rank: String(group.addongroup_rank || "0"),
         active: String(group.active || "1"),
         items: (group.addongroupitems || []).map((addonItem) => ({
-          id: String(addonItem.addonitemid), // ✅ FIXED
+          id: String(addonItem.addonitemid),
           name: String(addonItem.addonitem_name || ""),
           price: Number(addonItem.addonitem_price || 0),
           rank: String(addonItem.addonitem_rank || "0"),
@@ -37,7 +39,6 @@ const buildAddonGroupMap = (addonGroups) => {
     ]),
   );
 };
-
 
 /**
  * Expand item.addon references into full addon group details
@@ -78,87 +79,11 @@ const expandItemAddons = (item, addonGroupMap) => {
   return expanded;
 };
 
-const hashPayload = (payload) => {
-  const raw = JSON.stringify(payload);
-  return crypto.createHash("sha256").update(raw).digest("hex");
-};
-
-/**
- * Your webhook payload might be:
- * 1) already flat: { categories, items, taxes, ... }
- * 2) nested: { success, restaurants: [ { categories, items, taxes, ... } ] }
- *
- * This ensures the controller always gets the same structure it expects.
- */
-const normalizePetpoojaPayload = (payload) => {
-  if (!payload) return payload;
-
-  // already flat response shape
-  if (payload.categories || payload.items || payload.taxes) return payload;
-
-  // nested under restaurants[0]
-  const r0 = payload?.restaurants?.[0];
-  if (r0 && (r0.categories || r0.items || r0.taxes)) return r0;
-
-  return payload;
-};
-
-/**
- * DB-first menu source:
- * - Uses cached webhook payload from petpooja_menu_cache
- * - If not found, (optional) falls back to PetPooja and caches it
- *
- * If you want STRICT DB-only: set ALLOW_FALLBACK_TO_LIVE=false
- */
-const ALLOW_FALLBACK_TO_LIVE = true;
-
-const getMenuSource = async (resturent_identifier) => {
-  const rest_id = String(resturent_identifier || "").trim();
-  if (!rest_id) return null;
-
-  // 1) Try DB cache first
-  const { data: cacheRow, error: cacheErr } = await supabase
-    .from("petpooja_menu_cache")
-    .select("payload,version_hash,last_pushed_at")
-    .eq("rest_id", rest_id)
-    .maybeSingle();
-
-  if (!cacheErr && cacheRow?.payload) {
-    return normalizePetpoojaPayload(cacheRow.payload);
-  }
-
-  if (!ALLOW_FALLBACK_TO_LIVE) return null;
-
-  // 2) Fallback to live PetPooja (optional)
-  // const URI = `${process.env.PETPUJA_BASE_URL}/mapped_restaurant_menus`;
-  // const live = await petpujaService(URI, { restID: rest_id });
-
-  // cache it for next time
-  const payloadToStore = live;
-  const version_hash = hashPayload(payloadToStore);
-  const now = new Date().toISOString();
-
-  await supabase.from("petpooja_menu_cache").upsert(
-    {
-      rest_id,
-      payload: payloadToStore,
-      version_hash,
-      last_pushed_at: now,
-      updated_at: now,
-    },
-    { onConflict: "rest_id" }
-  );
-
-  return normalizePetpoojaPayload(live);
-};
-
 const getStockMap = async (rest_id) => {
   try {
     const { data, error } = await supabase
       .from("menu_item_stock")
-      .select(
-        "item_id,in_stock,turn_on_time",
-      )
+      .select("item_id,in_stock,turn_on_time")
       .eq("rest_id", String(rest_id));
 
     if (error) {
@@ -166,16 +91,15 @@ const getStockMap = async (rest_id) => {
       return new Map();
     }
 
-   return new Map(
-  (data || []).map((r) => [
-    String(r.item_id),
-    {
-      in_stock: String(r.in_stock),
-      turn_on_time:
-        r.turn_on_time || null,
-    },
-  ]),
-);
+    return new Map(
+      (data || []).map((r) => [
+        String(r.item_id),
+        {
+          in_stock: String(r.in_stock),
+          turn_on_time: r.turn_on_time || null,
+        },
+      ]),
+    );
   } catch (e) {
     console.error("getStockMap error:", e);
     return new Map();
@@ -183,28 +107,17 @@ const getStockMap = async (rest_id) => {
 };
 
 // attach availability to item, without removing it
-const applyAvailability = (
-  item,
-  stockMap,
-) => {
-  const ppItemId = String(
-    item.itemid,
-  );
+const applyAvailability = (item, stockMap) => {
+  const ppItemId = String(item.itemid);
 
-  const stockData =
-    stockMap.get(ppItemId);
+  const stockData = stockMap.get(ppItemId);
 
-  const override =
-    stockData?.in_stock;
+  const override = stockData?.in_stock;
 
-  const turn_on_time =
-    stockData?.turn_on_time ||
-    null;
+  const turn_on_time = stockData?.turn_on_time || null;
 
   // default = available
-  const isAvailable = override
-    ? override !== "0"
-    : true;
+  const isAvailable = override ? override !== "0" : true;
 
   return {
     ...item,
@@ -215,11 +128,11 @@ const applyAvailability = (
 
     turn_on_time,
 
-    active: isAvailable
-      ? item.active
-      : "0",
+    active: isAvailable ? item.active : "0",
   };
 };
+
+/* -------------------- CATEGORY LIST -------------------- */
 
 exports.fetchMenuCatagoryByResturent = async (req, res) => {
   try {
@@ -233,33 +146,36 @@ exports.fetchMenuCatagoryByResturent = async (req, res) => {
       });
     }
 
-    const { resturent_identifier } = validateSchema.value;
+    const rest_id = String(validateSchema.value.resturent_identifier).trim();
 
-    try {
-      const responseData = await getMenuSource(resturent_identifier);
+    const { data: categories, error } = await supabase
+      .from("menu_categories")
+      .select("category_id, category_name, active")
+      .eq("rest_id", rest_id);
 
-      if (!responseData) {
-        return res.error({
-          message: "Menu not cached yet",
-          status: 404,
-        });
-      }
+    if (error) throw error;
 
-      const catagories = (responseData.categories || []).map((i) => ({
-        id: i.categoryid,
-        name: i.categoryname,
-        active: i.active,
-      }));
-
-      return res.success({ data: catagories });
-    } catch (error) {
-      console.log(error);
-      return res.error({ message: "Something went wrong" });
+    if (!categories || categories.length === 0) {
+      return res.error({
+        message: "Menu not cached yet",
+        status: 404,
+      });
     }
+
+    const catagories = categories.map((i) => ({
+      id: i.category_id,
+      name: i.category_name,
+      active: i.active,
+    }));
+
+    return res.success({ data: catagories });
   } catch (err) {
+    console.error(err);
     return res.error({ message: "Internal server error" });
   }
 };
+
+/* -------------------- MENU BY CATEGORY -------------------- */
 
 exports.fetchMenuByCatagory = async (req, res) => {
   try {
@@ -274,34 +190,45 @@ exports.fetchMenuByCatagory = async (req, res) => {
     }
 
     const { resturent_identifier, category_id } = validateSchema.value;
+    const rest_id = String(resturent_identifier).trim();
 
-    const responseData = await getMenuSource(resturent_identifier);
-    if (!responseData) {
+    // taxes + addon groups
+    const { data: metaRow, error: metaError } = await supabase
+      .from("menu_metadata")
+      .select("taxes, addongroups")
+      .eq("rest_id", rest_id)
+      .maybeSingle();
+
+    if (metaError) throw metaError;
+
+    if (!metaRow) {
       return res.error({
         message: "Menu not cached yet",
         status: 404,
       });
     }
 
-    // Build tax lookup: taxid -> tax object
     const taxMap = new Map(
-      (responseData.taxes || []).map((t) => [String(t.taxid), t]),
+      (metaRow.taxes || []).map((t) => [String(t.taxid), t]),
     );
 
-    // ✅ Build addon group lookup
-    const addonGroupMap = buildAddonGroupMap(responseData.addongroups || []);
+    const addonGroupMap = buildAddonGroupMap(metaRow.addongroups || []);
 
-    // Filter items by category (but do NOT remove out-of-stock items)
-    const itemsByCategory = (responseData.items || []).filter(
-      (item) => String(item.item_categoryid) === String(category_id),
-    );
+    // items for this category
+    const { data: itemRows, error: itemsError } = await supabase
+      .from("menu_items")
+      .select("item_payload")
+      .eq("rest_id", rest_id)
+      .eq("category_id", String(category_id))
+      .eq("is_deleted", false);
+
+    if (itemsError) throw itemsError;
 
     // stock overrides
-    const stockMap = await getStockMap(resturent_identifier);
+    const stockMap = await getStockMap(rest_id);
 
-    const result = itemsByCategory.map((item) => {
-      // apply availability flag + active override
-      const itemWithAvailability = applyAvailability(item, stockMap);
+    const result = (itemRows || []).map((row) => {
+      const itemWithAvailability = applyAvailability(row.item_payload, stockMap);
 
       const basePrice = Number(itemWithAvailability.price || 0);
 
@@ -342,41 +269,28 @@ exports.fetchMenuByCatagory = async (req, res) => {
         ? +basePrice.toFixed(2)
         : +(basePrice + gst_total_amount).toFixed(2);
 
-      // ✅ Expand addon references
-    const expandedAddons = expandItemAddons(
-  itemWithAvailability,
-  addonGroupMap,
-);
+      // Expand addon references
+      const expandedAddons = expandItemAddons(itemWithAvailability, addonGroupMap);
 
-/**
- * ADD THIS
- */
-const variationsWithAddons = (
-  itemWithAvailability.variation || []
-).map((variation) => ({
-  ...variation,
+      const variationsWithAddons = (itemWithAvailability.variation || []).map(
+        (variation) => ({
+          ...variation,
+          addons: expandItemAddons(variation, addonGroupMap),
+        }),
+      );
 
-  addons: expandItemAddons(
-    variation,
-    addonGroupMap,
-  ),
-}));
+      return {
+        ...itemWithAvailability,
 
-return {
-  ...itemWithAvailability,
+        variation: variationsWithAddons,
 
-  /**
-   * ADD THIS
-   */
-  variation: variationsWithAddons,
-
-  base_price: +basePrice.toFixed(2),
-  tax_breakup,
-  gst_total_percentage: +gst_total_percentage.toFixed(2),
-  gst_total_amount,
-  price_with_gst,
-  addons: expandedAddons,
-};
+        base_price: +basePrice.toFixed(2),
+        tax_breakup,
+        gst_total_percentage: +gst_total_percentage.toFixed(2),
+        gst_total_amount,
+        price_with_gst,
+        addons: expandedAddons,
+      };
     });
 
     return res.success({ data: result });
@@ -385,6 +299,8 @@ return {
     return res.error({ message: "Internal server error" });
   }
 };
+
+/* -------------------- ADMIN: ALL CATEGORIES + MENUS -------------------- */
 
 exports.fetchAdminMenuWithCategory = async (req, res) => {
   try {
@@ -396,50 +312,176 @@ exports.fetchAdminMenuWithCategory = async (req, res) => {
       });
     }
 
-    const { resturent_identifier } = validateSchema.value;
+    const rest_id = String(validateSchema.value.resturent_identifier).trim();
 
-    const responseData = await getMenuSource(resturent_identifier);
-    if (!responseData) {
+    const { data: categories, error: catError } = await supabase
+      .from("menu_categories")
+      .select("category_id, category_name, active")
+      .eq("rest_id", rest_id);
+
+    if (catError) throw catError;
+
+    if (!categories || categories.length === 0) {
       return res.error({
         message: "Menu not cached yet",
         status: 404,
       });
     }
 
-    const categories = responseData?.categories || [];
-    const items = responseData?.items || [];
+    const { data: itemRows, error: itemsError } = await supabase
+      .from("menu_items")
+      .select("category_id, item_payload, cuisine_tag, mood_tag")
+      .eq("rest_id", rest_id)
+      .eq("is_deleted", false);
 
-    // ✅ Build addon group lookup
-    const addonGroupMap = buildAddonGroupMap(responseData.addongroups || []);
+    if (itemsError) throw itemsError;
+
+    const { data: metaRow, error: metaError } = await supabase
+      .from("menu_metadata")
+      .select("addongroups")
+      .eq("rest_id", rest_id)
+      .maybeSingle();
+
+    if (metaError) throw metaError;
+
+    const addonGroupMap = buildAddonGroupMap(metaRow?.addongroups || []);
 
     // stock overrides
-    const stockMap = await getStockMap(resturent_identifier);
+    const stockMap = await getStockMap(rest_id);
 
     // attach availability for all items AND expand addons
-    const itemsWithAvailability = items.map((item) => {
-      const itemWithAvail = applyAvailability(item, stockMap);
+    const itemsWithAvailability = (itemRows || []).map((row) => {
+      const itemWithAvail = applyAvailability(row.item_payload, stockMap);
 
-      // ✅ Expand addon references
       const expandedAddons = expandItemAddons(itemWithAvail, addonGroupMap);
 
       return {
         ...itemWithAvail,
-        addons: expandedAddons, // ✅ NEW: Full addon details
+        addons: expandedAddons,
+        cuisine_tag: row.cuisine_tag,
+        mood_tag: row.mood_tag,
       };
     });
 
     const data = categories.map((cat) => ({
-      id: cat.categoryid,
-      name: cat.categoryname,
+      id: cat.category_id,
+      name: cat.category_name,
       active: cat.active,
       menus: itemsWithAvailability.filter(
-        (menu) => menu.item_categoryid == cat.categoryid,
+        (menu) => String(menu.item_categoryid) === String(cat.category_id),
       ),
     }));
 
     return res.success({ data });
   } catch (error) {
-    console.log("ADMIN MENU ERROR:", error);
+    console.error("ADMIN MENU ERROR:", error);
+    return res.error({ message: "Internal server error" });
+  }
+};
+
+/* -------------------- ADMIN: SET CUISINE / MOOD TAG ON AN ITEM -------------------- */
+
+exports.updateMenuItemTags = async (req, res) => {
+  try {
+    const { resturent_identifier, item_id, cuisine_tag, mood_tag } = req.body;
+
+    const rest_id = String(resturent_identifier || "").trim();
+    const itemId  = String(item_id || "").trim();
+
+    if (!rest_id || !itemId) {
+      return res.error({
+        message: "resturent_identifier and item_id are required",
+        status: 400,
+      });
+    }
+
+    if (cuisine_tag && !CUISINE_TAGS.includes(cuisine_tag)) {
+      return res.error({
+        message: `cuisine_tag must be one of: ${CUISINE_TAGS.join(", ")}`,
+        status: 400,
+      });
+    }
+
+    if (mood_tag && !MOOD_TAGS.includes(mood_tag)) {
+      return res.error({
+        message: `mood_tag must be one of: ${MOOD_TAGS.join(", ")}`,
+        status: 400,
+      });
+    }
+
+    const updatePayload = { updated_at: new Date().toISOString() };
+    if (cuisine_tag !== undefined) updatePayload.cuisine_tag = cuisine_tag || null;
+    if (mood_tag !== undefined) updatePayload.mood_tag = mood_tag || null;
+
+    const { data, error } = await supabase
+      .from("menu_items")
+      .update(updatePayload)
+      .eq("rest_id", rest_id)
+      .eq("item_id", itemId)
+      .select("item_id, cuisine_tag, mood_tag")
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!data) {
+      return res.error({ message: "Item not found", status: 404 });
+    }
+
+    return res.success({ data });
+  } catch (err) {
+    console.error("updateMenuItemTags error:", err);
+    return res.error({ message: "Internal server error" });
+  }
+};
+
+/* -------------------- FOOD FINDER QUIZ: FILTER BY CUISINE / MOOD -------------------- */
+
+exports.fetchMenuByQuizTags = async (req, res) => {
+  try {
+    const { resturent_identifier, cuisine_tag, mood_tag } = req.body;
+
+    const rest_id = String(resturent_identifier || "").trim();
+    if (!rest_id) {
+      return res.error({ message: "resturent_identifier required", status: 400 });
+    }
+
+    if (cuisine_tag && !CUISINE_TAGS.includes(cuisine_tag)) {
+      return res.error({
+        message: `cuisine_tag must be one of: ${CUISINE_TAGS.join(", ")}`,
+        status: 400,
+      });
+    }
+
+    if (mood_tag && !MOOD_TAGS.includes(mood_tag)) {
+      return res.error({
+        message: `mood_tag must be one of: ${MOOD_TAGS.join(", ")}`,
+        status: 400,
+      });
+    }
+
+    let query = supabase
+      .from("menu_items")
+      .select("category_id, item_payload, cuisine_tag, mood_tag")
+      .eq("rest_id", rest_id)
+      .eq("is_deleted", false);
+
+    if (cuisine_tag) query = query.eq("cuisine_tag", cuisine_tag);
+    if (mood_tag) query = query.eq("mood_tag", mood_tag);
+
+    const { data: itemRows, error } = await query;
+    if (error) throw error;
+
+    const stockMap = await getStockMap(rest_id);
+
+    const result = (itemRows || []).map((row) => ({
+      ...applyAvailability(row.item_payload, stockMap),
+      cuisine_tag: row.cuisine_tag,
+      mood_tag: row.mood_tag,
+    }));
+
+    return res.success({ data: result });
+  } catch (err) {
+    console.error("fetchMenuByQuizTags error:", err);
     return res.error({ message: "Internal server error" });
   }
 };
