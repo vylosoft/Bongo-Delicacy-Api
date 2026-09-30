@@ -1,15 +1,8 @@
-const { Sequelize } = require('sequelize');
-const env = require('./env');
+const { createClient } = require("@supabase/supabase-js");
 
-const sequelize = new Sequelize(env.DB_URL, {
-  dialect: 'postgres',
-  logging: false,
-  pool: {
-    max: 2,
-    min: 0,
-    acquire: 30000,
-    idle: 10000
-  }
-});
+const supabase = createClient(
+  "https://nldgaczpzfmwamivniua.supabase.co",
+"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZGdhY3pwemZtd2FtaXZuaXVhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjYyNzA5NSwiZXhwIjoyMDc4MjAzMDk1fQ.sLnOMjKs-WJu9IyAaLUzLCmKZl0-Ph32-ElUT2MbWYY"
+);
 
-module.exports = sequelize;
+module.exports = supabase ;
